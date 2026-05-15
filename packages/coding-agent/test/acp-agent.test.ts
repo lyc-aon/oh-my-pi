@@ -92,6 +92,10 @@ class FakeAgentSession {
 	skillsSettings = { enableSkillCommands: true };
 	skills: Array<{ name: string; description: string; filePath: string; baseDir: string; source: string }> = [];
 	planModeState: PlanModeState | undefined;
+	/** Set to a pending promise to block the session after agent_end fires, simulating
+	 *  post-prompt recovery work (retries, TTSR, compaction). AcpAgent must not resolve
+	 *  session/prompt until this promise settles. Consumed and cleared on each call. */
+	postPromptBarrier: Promise<void> | undefined = undefined;
 	#listeners = new Set<(event: AgentSessionEvent) => void>();
 
 	constructor(
@@ -173,6 +177,11 @@ class FakeAgentSession {
 			} as AgentSessionEvent);
 		}
 		this.isStreaming = false;
+		// Simulate #waitForPostPromptRecovery — callers can set postPromptBarrier
+		// to verify that AcpAgent defers session/prompt resolution past this point.
+		const barrier = this.postPromptBarrier;
+		this.postPromptBarrier = undefined;
+		await barrier;
 	}
 
 	async abort(): Promise<void> {
@@ -198,6 +207,9 @@ class FakeAgentSession {
 			} as AgentSessionEvent);
 		}
 		this.isStreaming = false;
+		const barrier = this.postPromptBarrier;
+		this.postPromptBarrier = undefined;
+		await barrier;
 	}
 
 	async refreshMCPTools(_tools: unknown[]): Promise<void> {}
@@ -882,6 +894,86 @@ describe("ACP agent", () => {
 
 		expect(session.forcedToolChoice).toBe("read");
 		expect(session.promptCalls).toEqual(["inspect package.json"]);
+
+		harness.abortController.abort();
+		await Bun.sleep(0);
+	});
+
+	it("does not resolve session/prompt before AgentSession idle cleanup completes", async () => {
+		// Regression for #1069: session/prompt was resolved at agent_end time, before
+		// AgentSession.prompt() returned. Any post-prompt recovery work (retries, TTSR,
+		// compaction, post-prompt tasks) would race with the next ACP prompt.
+		const harness = await createHarness();
+		const created = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
+		const session = harness.findSession(created.sessionId)!;
+
+		// Block the session after agent_end fires, simulating #waitForPostPromptRecovery.
+		const { promise: barrier, resolve: unblock } = Promise.withResolvers<void>();
+		session.postPromptBarrier = barrier;
+
+		const responsePromise = harness.agent.prompt({
+			sessionId: created.sessionId,
+			messageId: "00000000-0000-4000-8000-000000000020",
+			prompt: [{ type: "text", text: "ping" }],
+		} as PromptRequest);
+
+		// Drain microtasks so agent_end fires and #handlePromptEvent completes.
+		// The barrier keeps session.prompt() (and therefore #runPromptOrCommand) blocked.
+		await Bun.sleep(10);
+
+		let resolved = false;
+		void responsePromise.then(() => {
+			resolved = true;
+		});
+		// Yield to let any synchronous .then callbacks execute.
+		await Bun.sleep(0);
+
+		// session/prompt MUST NOT have resolved while the session is still in recovery.
+		expect(resolved).toBe(false);
+
+		// Unblock recovery; session.prompt() returns; #runPromptOrCommand resolves.
+		unblock();
+		const response = await responsePromise;
+		expectAcpStructure(zPromptResponse, response);
+		expect(response.stopReason).toBe("end_turn");
+
+		harness.abortController.abort();
+		await Bun.sleep(0);
+	});
+
+	it("rejects a second session/prompt while idle cleanup from the first turn is pending", async () => {
+		// Regression for #1069: with the early-resolution bug, a second prompt could
+		// start while post-prompt recovery from the previous turn was still running.
+		const harness = await createHarness();
+		const created = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });
+		const session = harness.findSession(created.sessionId)!;
+
+		const { promise: barrier, resolve: unblock } = Promise.withResolvers<void>();
+		session.postPromptBarrier = barrier;
+
+		const firstPromise = harness.agent.prompt({
+			sessionId: created.sessionId,
+			messageId: "00000000-0000-4000-8000-000000000030",
+			prompt: [{ type: "text", text: "first" }],
+		} as PromptRequest);
+
+		// Let agent_end fire so the first turn is in idle cleanup (barrier pending).
+		await Bun.sleep(10);
+
+		// A concurrent second prompt must be rejected — the turn boundary has not yet
+		// been handed to the client so the session is still logically busy.
+		await expect(
+			harness.agent.prompt({
+				sessionId: created.sessionId,
+				messageId: "00000000-0000-4000-8000-000000000031",
+				prompt: [{ type: "text", text: "second" }],
+			} as PromptRequest),
+		).rejects.toThrow("ACP prompt already in progress");
+
+		// Unblock; the first prompt must resolve cleanly.
+		unblock();
+		const response = await firstPromise;
+		expectAcpStructure(zPromptResponse, response);
 
 		harness.abortController.abort();
 		await Bun.sleep(0);

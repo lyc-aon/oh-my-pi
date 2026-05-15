@@ -95,6 +95,10 @@ type PromptTurnState = {
 	settled: boolean;
 	usageBaseline: UsageStatistics;
 	unsubscribe: (() => void) | undefined;
+	/** Response built from the most-recent `agent_end` event. Updated on each retry so the
+	 *  final value reflects the last completed agent run. Resolved in `#runPromptOrCommand`
+	 *  after `session.prompt()` (and `#waitForPostPromptRecovery`) have fully settled. */
+	pendingResponse: PromptResponse | undefined;
 	resolve: (value: PromptResponse) => void;
 	reject: (reason?: unknown) => void;
 };
@@ -392,6 +396,7 @@ export class AcpAgent implements Agent {
 			settled: false,
 			usageBaseline: this.#cloneUsageStatistics(record.session.sessionManager.getUsageStatistics()),
 			unsubscribe: undefined,
+			pendingResponse: undefined,
 			resolve: pendingPrompt.resolve,
 			reject: pendingPrompt.reject,
 		};
@@ -410,6 +415,9 @@ export class AcpAgent implements Agent {
 	async #runPromptOrCommand(record: ManagedSessionRecord, text: string, images: AgentImageContent[]): Promise<void> {
 		const skillResult = await this.#tryRunSkillCommand(record, text);
 		if (skillResult) {
+			// promptCustomMessage() has returned — #waitForPostPromptRecovery() settled.
+			await this.#emitEndOfTurnUpdates(record);
+			this.#finishPrompt(record, record.promptTurn?.pendingResponse);
 			return;
 		}
 
@@ -437,7 +445,10 @@ export class AcpAgent implements Agent {
 		});
 		if (builtinResult !== false) {
 			if ("prompt" in builtinResult) {
+				// session.prompt() has returned — #waitForPostPromptRecovery() settled.
 				await record.session.prompt(builtinResult.prompt, { images });
+				await this.#emitEndOfTurnUpdates(record);
+				this.#finishPrompt(record, record.promptTurn?.pendingResponse);
 				return;
 			}
 			const promptTurn = record.promptTurn;
@@ -453,7 +464,10 @@ export class AcpAgent implements Agent {
 			return;
 		}
 
+		// session.prompt() has returned — #waitForPostPromptRecovery() settled.
 		await record.session.prompt(text, { images });
+		await this.#emitEndOfTurnUpdates(record);
+		this.#finishPrompt(record, record.promptTurn?.pendingResponse);
 	}
 
 	async #tryRunSkillCommand(record: ManagedSessionRecord, text: string): Promise<boolean> {
@@ -776,12 +790,18 @@ export class AcpAgent implements Agent {
 		this.#clearLiveAssistantMessageAfterEvent(record, event);
 
 		if (event.type === "agent_end") {
-			await this.#emitEndOfTurnUpdates(record);
-			this.#finishPrompt(record, {
+			// Capture the response for the most-recent agent run. On retries this is
+			// overwritten so the final value always reflects the last completed run.
+			// We do NOT call #emitEndOfTurnUpdates or #finishPrompt here because
+			// session.prompt() has not yet returned — #waitForPostPromptRecovery()
+			// (retries, TTSR injection, compaction, post-prompt tasks) may still be
+			// pending. Both are deferred to #runPromptOrCommand, which awaits
+			// session.prompt() / promptCustomMessage() before resolving.
+			promptTurn.pendingResponse = {
 				stopReason: this.#resolveStopReason(event, promptTurn.cancelRequested),
 				usage: this.#buildTurnUsage(promptTurn.usageBaseline, record.session.sessionManager.getUsageStatistics()),
 				userMessageId: promptTurn.userMessageId,
-			});
+			};
 		}
 	}
 
