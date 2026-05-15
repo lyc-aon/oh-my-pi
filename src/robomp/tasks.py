@@ -14,6 +14,7 @@ from robomp.github_client import (
     CommentInfo,
     GitHubError,
     IssueInfo,
+    PullRequestInfo,
     RepoInfo,
     parse_issue_payload,
 )
@@ -164,6 +165,54 @@ async def _resolve_repo_and_issue(
         except GitHubError as exc:
             log.warning("issue refetch failed", extra={"err": str(exc)})
     return repo, issue
+
+
+async def _resolve_issue_row_for_pr(
+    *,
+    db: Database,
+    github: GitHubBackend,
+    repo_full: str,
+    pr_number: int,
+) -> tuple[IssueRow | None, PullRequestInfo | None]:
+    """Find the originating issue row for a PR, repairing stale mappings when possible."""
+    issue_row = db.find_issue_by_pr(repo_full, pr_number)
+    pr_info: PullRequestInfo | None = None
+    if issue_row is None or issue_row.branch is None:
+        try:
+            pr_info = await github.get_pull_request(repo_full, pr_number)
+        except GitHubError as exc:
+            log.warning("PR metadata fetch failed", extra={"repo": repo_full, "pr": pr_number, "err": str(exc)})
+            return issue_row, None
+
+    if issue_row is None and pr_info is not None and pr_info.head_ref:
+        issue_row = db.find_issue_by_branch(repo_full, pr_info.head_ref)
+        if issue_row is not None:
+            db.set_issue_pr(issue_row.key, pr_number)
+            issue_row = db.get_issue(issue_row.key) or issue_row
+    elif issue_row is not None and issue_row.branch is None and pr_info is not None and pr_info.head_ref:
+        db.set_issue_branch(issue_row.key, pr_info.head_ref)
+        issue_row = db.get_issue(issue_row.key) or issue_row
+    return issue_row, pr_info
+
+
+def _can_handle_pr_directly(*, settings: Settings, repo_full: str, pr: PullRequestInfo) -> bool:
+    """Only bot-owned same-repo PR branches are safe to amend directly."""
+    if not pr.head_ref:
+        log.info("skip: PR has no head ref", extra={"repo": repo_full, "pr": pr.number})
+        return False
+    if pr.author.lower() != settings.bot_login.lower():
+        log.info(
+            "skip: unmapped PR not authored by bot",
+            extra={"repo": repo_full, "pr": pr.number, "author": pr.author},
+        )
+        return False
+    if pr.head_repo.lower() != repo_full.lower():
+        log.info(
+            "skip: unmapped PR head is not this repo",
+            extra={"repo": repo_full, "pr": pr.number, "head_repo": pr.head_repo},
+        )
+        return False
+    return True
 
 
 async def triage_issue(
@@ -380,14 +429,26 @@ async def handle_review(
     if not repo_full:
         log.info("skip: review without repo")
         return
-    # Discover the originating issue from the DB.
-    issue_row = db.find_issue_by_pr(repo_full, pr_number)
+    issue_row, pr_info = await _resolve_issue_row_for_pr(
+        db=db,
+        github=github,
+        repo_full=repo_full,
+        pr_number=pr_number,
+    )
     if issue_row is None:
-        log.info("skip: review on unknown PR", extra={"repo": repo_full, "pr": pr_number})
-        return
+        if pr_info is None or not _can_handle_pr_directly(settings=settings, repo_full=repo_full, pr=pr_info):
+            return
+        issue_number = pr_number
+        existing_branch = pr_info.head_ref
+    else:
+        if issue_row.branch is None:
+            log.info("skip: review PR missing branch mapping", extra={"repo": repo_full, "pr": pr_number})
+            return
+        issue_number = issue_row.number
+        existing_branch = issue_row.branch
     try:
         repo = await github.get_repo(repo_full)
-        issue = await github.get_issue(repo_full, issue_row.number)
+        issue = await github.get_issue(repo_full, issue_number)
     except GitHubError as exc:
         log.warning("review fetch failed", extra={"err": str(exc)})
         return
@@ -398,11 +459,21 @@ async def handle_review(
         title=issue.title,
         clone_url=clone_url,
         default_branch=repo.default_branch,
-        existing_branch=issue_row.branch,
+        existing_branch=existing_branch,
         author_name=settings.resolved_author_name,
         author_email=settings.git_author_email,
         slot_uid=slot_uid,
     )
+    if issue_row is None:
+        db.upsert_issue(
+            key=issue_key(repo_full, pr_number),
+            repo=repo_full,
+            number=pr_number,
+            state="opened",
+            branch=workspace.branch,
+            session_dir=str(workspace.session_dir),
+            pr_number=pr_number,
+        )
     comment = payload.get("comment") or {}
     user = comment.get("user") or {}
     review_payload = {
@@ -458,12 +529,17 @@ async def handle_pr_conversation(
     if not repo_full or not isinstance(pr_number, int):
         log.info("skip: pr-conversation missing repo/number")
         return
-    issue_row = db.find_issue_by_pr(repo_full, pr_number)
+    issue_row, pr_info = await _resolve_issue_row_for_pr(
+        db=db,
+        github=github,
+        repo_full=repo_full,
+        pr_number=pr_number,
+    )
     if issue_row is None:
-        log.info("skip: pr-conversation on unknown PR", extra={"repo": repo_full, "pr": pr_number})
-        return
+        if pr_info is None or not _can_handle_pr_directly(settings=settings, repo_full=repo_full, pr=pr_info):
+            return
     directive = _directive_from_payload(payload)
-    if issue_row.state in ("merged", "closed", "abandoned"):
+    if issue_row is not None and issue_row.state in ("merged", "closed", "abandoned"):
         if directive is None:
             log.info("skip: pr-conversation on finalized issue", extra={"key": issue_row.key, "state": issue_row.state})
             # Still acknowledge so the reporter knows the bot saw it.
@@ -499,18 +575,26 @@ async def handle_pr_conversation(
         except GitHubError as exc:
             log.warning("bare mention reply failed", extra={"err": str(exc)})
         return
+    issue_number = issue_row.number if issue_row is not None else pr_number
     try:
         repo = await github.get_repo(repo_full)
-        issue = await github.get_issue(repo_full, issue_row.number)
+        issue = await github.get_issue(repo_full, issue_number)
     except GitHubError as exc:
         log.warning("pr-conversation fetch failed", extra={"err": str(exc)})
         return
     clone_url = repo.clone_url
-    # On a reopen the prior branch is stale (merged/deleted), so branch from
-    # default; otherwise reuse the existing branch.
-    existing_branch = (
-        None if directive and issue_row.state == "reproducing" and issue_row.branch is None else issue_row.branch
-    )
+    if issue_row is None:
+        assert pr_info is not None
+        existing_branch = pr_info.head_ref
+    else:
+        # On a reopen the prior branch is stale (merged/deleted), so branch from
+        # default; otherwise reuse the existing branch.
+        existing_branch = (
+            None if directive and issue_row.state == "reproducing" and issue_row.branch is None else issue_row.branch
+        )
+        if existing_branch is None and not (directive and issue_row.state == "reproducing"):
+            log.info("skip: pr-conversation PR missing branch mapping", extra={"repo": repo_full, "pr": pr_number})
+            return
     workspace = sandbox.ensure_workspace(
         repo=repo.full_name,
         number=issue.number,
@@ -522,7 +606,17 @@ async def handle_pr_conversation(
         author_email=settings.git_author_email,
         slot_uid=slot_uid,
     )
-    if directive is not None and (issue_row.branch is None or issue_row.branch != workspace.branch):
+    if issue_row is None:
+        db.upsert_issue(
+            key=issue_key(repo_full, pr_number),
+            repo=repo_full,
+            number=pr_number,
+            state="opened",
+            branch=workspace.branch,
+            session_dir=str(workspace.session_dir),
+            pr_number=pr_number,
+        )
+    elif directive is not None and (issue_row.branch is None or issue_row.branch != workspace.branch):
         db.upsert_issue(
             key=issue_row.key,
             repo=issue_row.repo,

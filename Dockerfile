@@ -88,7 +88,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        git curl ca-certificates unzip openssh-client tini \
+        git curl ca-certificates unzip openssh-client tini sqlite3 \
         build-essential pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 

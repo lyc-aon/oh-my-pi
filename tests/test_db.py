@@ -135,6 +135,8 @@ def test_upsert_issue_round_trip(db: Database) -> None:
 
     found = db.find_issue_by_pr("octo/widget", 42)
     assert found and found.key == key
+    by_branch = db.find_issue_by_branch("octo/widget", "farm/abcd1234/some-issue")
+    assert by_branch and by_branch.key == key
 
 
 def test_log_tool_call(db: Database) -> None:

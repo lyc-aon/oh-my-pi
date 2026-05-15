@@ -505,6 +505,44 @@ def test_ensure_workspace_is_idempotent(tmp_path: Path, upstream_repo: Path) -> 
     assert ws1.branch == ws2.branch
 
 
+def test_ensure_workspace_existing_branch_starts_from_remote_head(tmp_path: Path, upstream_repo: Path) -> None:
+    branch = "farm/abc12345/existing-pr"
+    seed = tmp_path / "remote-branch-seed"
+    _git(["clone", str(upstream_repo), str(seed)], cwd=tmp_path)
+    _git(["-C", str(seed), "checkout", "-b", branch], cwd=tmp_path)
+    (seed / "README.md").write_text("from pr branch\n", encoding="utf-8")
+    _git(["-C", str(seed), "add", "README.md"], cwd=tmp_path)
+    subprocess.run(
+        ["git", "commit", "-m", "pr branch"],
+        cwd=str(seed),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=os.environ
+        | {
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+    _git(["-C", str(seed), "push", "origin", branch], cwd=tmp_path)
+
+    mgr = SandboxManager(tmp_path / "workspaces")
+    ws = mgr.ensure_workspace(
+        repo="octo/widget",
+        number=77,
+        title="follow up",
+        clone_url=str(upstream_repo),
+        default_branch="main",
+        existing_branch=branch,
+        author_name="robomp-bot",
+        author_email="robomp-bot@example.invalid",
+    )
+
+    assert ws.branch == branch
+    assert (ws.repo_dir / "README.md").read_text(encoding="utf-8") == "from pr branch\n"
+
 def test_remove_workspace(tmp_path: Path, upstream_repo: Path) -> None:
     mgr = SandboxManager(tmp_path / "workspaces")
     ws = mgr.ensure_workspace(

@@ -524,13 +524,23 @@ class SandboxManager:
         )
 
         if not (repo_dir / ".git").exists():
-            # Make sure the branch's base ref exists locally (best-effort).
-            self.transport.fetch_base_ref(repo=repo, pool_dir=pool, ref=default_branch)
-            # Try worktree add; if the branch already exists in the pool, reuse it.
+            # Make sure the requested start point exists locally (best-effort).
+            # For follow-ups on an existing PR, `existing_branch` is the remote
+            # head branch we need to amend; starting from default would silently
+            # lose the PR's current commits if the local pool branch is absent.
+            self.transport.fetch_base_ref(repo=repo, pool_dir=pool, ref=existing_branch or default_branch)
             check = _safe_run(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], cwd=pool)
             if check.returncode == 0:
                 _run(["git", "worktree", "add", str(repo_dir), branch], cwd=pool)
             else:
+                start_point = f"origin/{default_branch}"
+                if existing_branch:
+                    remote = _safe_run(
+                        ["git", "rev-parse", "--verify", f"refs/remotes/origin/{existing_branch}"],
+                        cwd=pool,
+                    )
+                    if remote.returncode == 0:
+                        start_point = f"origin/{existing_branch}"
                 _run(
                     [
                         "git",
@@ -539,7 +549,7 @@ class SandboxManager:
                         "-b",
                         branch,
                         str(repo_dir),
-                        f"origin/{default_branch}",
+                        start_point,
                     ],
                     cwd=pool,
                 )
