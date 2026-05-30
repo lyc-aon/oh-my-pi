@@ -228,6 +228,41 @@ describe("AgentSession MCP discovery", () => {
 		expect(session.systemPrompt).toEqual(["tools:read"]);
 	});
 
+	it("activates caller-selected MCP servers after refresh in non-discovery sessions", async () => {
+		const readTool = createBasicTool("read", "Read");
+		const toolRegistry = new Map([[readTool.name, readTool]]);
+		const agent = new Agent({
+			initialState: {
+				model: createModel(),
+				systemPrompt: ["initial"],
+				tools: [readTool],
+				messages: [],
+			},
+		});
+		const session = new AgentSession({
+			agent,
+			sessionManager: SessionManager.inMemory(),
+			settings: Settings.isolated({ "mcp.discoveryMode": false }),
+			modelRegistry: {} as never,
+			toolRegistry,
+			mcpDiscoveryEnabled: false,
+			rebuildSystemPrompt: async toolNames => ({
+				systemPrompt: [`tools:${toolNames.join(",")}`],
+			}),
+		});
+		sessions.push(session);
+
+		session.setDefaultSelectedMCPServers(["codegraph"]);
+		await session.refreshMCPTools([
+			createMcpCustomTool("mcp__codegraph_search", "codegraph", "search", "Search codegraph", ["query"]),
+			createMcpCustomTool("mcp__docs_search", "docs", "search", "Search docs", ["query"]),
+		]);
+
+		expect(session.getSelectedMCPToolNames()).toEqual(["mcp__codegraph_search"]);
+		expect(session.getActiveToolNames()).toEqual(["read", "mcp__codegraph_search"]);
+		expect(session.systemPrompt).toEqual(["tools:read,mcp__codegraph_search"]);
+	});
+
 	it("preserves directly activated MCP tools across refreshes in discovery mode", async () => {
 		const readTool = createBasicTool("read", "Read");
 		const docsSearchTool = createMcpTool("mcp__docs_search", "docs", "search", "Search internal docs", ["query"]);

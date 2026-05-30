@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -20,6 +20,8 @@ import {
 import type { Model } from "@oh-my-pi/pi-ai";
 import { getConfigRootDir, setAgentDir } from "@oh-my-pi/pi-utils";
 import { resetSettingsForTest, Settings } from "../src/config/settings";
+import type { CustomTool } from "../src/extensibility/custom-tools/types";
+import { MCPManager } from "../src/mcp/manager";
 import { ACP_BOOTSTRAP_RACE_GUARD_MS, AcpAgent, createAcpExtensionUiContext } from "../src/modes/acp/acp-agent";
 import type { PlanModeState } from "../src/plan-mode/state";
 import type { AgentSession, AgentSessionEvent } from "../src/session/agent-session";
@@ -106,6 +108,8 @@ class FakeAgentSession {
 	waitForIdleBlocker: (() => Promise<void>) | undefined;
 	asyncJobDrain: ((options?: { timeoutMs?: number }) => Promise<boolean>) | undefined;
 	#listeners = new Set<(event: AgentSessionEvent) => void>();
+	defaultSelectedMCPServerNames = new Set<string>();
+	activeToolNames: string[] = [];
 
 	constructor(
 		cwd: string,
@@ -230,7 +234,13 @@ class FakeAgentSession {
 		this.isStreaming = false;
 	}
 
-	async refreshMCPTools(_tools: unknown[]): Promise<void> {}
+	async refreshMCPTools(tools: Array<{ name: string; mcpServerName?: string }>): Promise<void> {
+		const selectedMCPTools = tools
+			.filter(tool => tool.mcpServerName && this.defaultSelectedMCPServerNames.has(tool.mcpServerName))
+			.map(tool => tool.name);
+		const activeNonMCPTools = this.activeToolNames.filter(name => !name.startsWith("mcp__"));
+		this.activeToolNames = [...activeNonMCPTools, ...selectedMCPTools];
+	}
 
 	getContextUsage(): undefined {
 		return undefined;
@@ -266,14 +276,20 @@ class FakeAgentSession {
 	}
 
 	getActiveToolNames(): string[] {
-		return [];
+		return this.activeToolNames;
 	}
 
 	getAllToolNames(): string[] {
-		return [];
+		return this.activeToolNames;
 	}
 
-	setActiveToolsByName(_toolNames: string[]): void {}
+	setActiveToolsByName(toolNames: string[]): void {
+		this.activeToolNames = toolNames;
+	}
+
+	setDefaultSelectedMCPServers(serverNames: string[]): void {
+		this.defaultSelectedMCPServerNames = new Set(serverNames);
+	}
 
 	setClientBridge(_bridge: unknown): void {}
 
@@ -443,6 +459,49 @@ async function waitForBootstrapGuard(): Promise<void> {
 }
 
 describe("ACP agent", () => {
+	function createMcpTool(name: string, serverName: string): CustomTool {
+		return {
+			name,
+			label: `${serverName}/${name}`,
+			description: `${serverName} ${name}`,
+			parameters: {
+				type: "object",
+				properties: {},
+			},
+			mcpServerName: serverName,
+			mcpToolName: name.replace(`mcp__${serverName}_`, ""),
+			async execute() {
+				return { content: [{ type: "text", text: `${name} executed` }] };
+			},
+		} as unknown as CustomTool;
+	}
+
+	it("auto-selects tools from ACP client-provided MCP servers", async () => {
+		const harness = await createHarness();
+		const tools = [
+			createMcpTool("mcp__codegraph_search", "codegraph"),
+			createMcpTool("mcp__codegraph_context", "codegraph"),
+		];
+		const connectSpy = spyOn(MCPManager.prototype, "connectServers").mockResolvedValue({
+			tools,
+			errors: new Map(),
+			connectedServers: ["codegraph"],
+			exaApiKeys: [],
+		});
+		try {
+			const created = await harness.agent.newSession({
+				cwd: harness.cwdA,
+				mcpServers: [{ name: "codegraph", command: "bunx", args: ["codegraph", "serve", "--mcp"], env: [] }],
+			});
+			const session = harness.findSession(created.sessionId)!;
+
+			expect(connectSpy).toHaveBeenCalledTimes(1);
+			expect(session.getActiveToolNames()).toEqual(["mcp__codegraph_search", "mcp__codegraph_context"]);
+		} finally {
+			connectSpy.mockRestore();
+		}
+	});
+
 	it("supports multiple live ACP sessions with model and lifecycle handlers", async () => {
 		const harness = await createHarness();
 		const first = await harness.agent.newSession({ cwd: harness.cwdA, mcpServers: [] });

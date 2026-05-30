@@ -1970,6 +1970,7 @@ export class AcpAgent implements Agent {
 			await record.mcpManager.disconnectAll();
 		}
 		if (servers.length === 0) {
+			record.session.setDefaultSelectedMCPServers([]);
 			record.mcpManager = undefined;
 			await record.session.refreshMCPTools([]);
 			return;
@@ -1998,6 +1999,7 @@ export class AcpAgent implements Agent {
 		}
 
 		record.mcpManager = manager;
+		record.session.setDefaultSelectedMCPServers(result.connectedServers);
 		await record.session.refreshMCPTools(result.tools);
 	}
 

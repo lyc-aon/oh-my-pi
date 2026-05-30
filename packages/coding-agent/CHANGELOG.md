@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed ACP client-provided `mcpServers` connecting without their tools being auto-selected for the model ([#1525](https://github.com/can1357/oh-my-pi/issues/1525)).
+
 ## [15.5.15] - 2026-05-30
 ### Changed
 

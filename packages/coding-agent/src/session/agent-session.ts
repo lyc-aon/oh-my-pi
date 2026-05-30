@@ -3070,6 +3070,11 @@ export class AgentSession {
 		return this.#filterSelectableMCPToolNames(this.#selectedMCPToolNames);
 	}
 
+	/** Replace the MCP servers whose tools seed automatic selection on refresh. */
+	setDefaultSelectedMCPServers(serverNames: Iterable<string>): void {
+		this.#defaultSelectedMCPServerNames = new Set(serverNames);
+	}
+
 	async activateDiscoveredMCPTools(toolNames: string[]): Promise<string[]> {
 		const nextSelectedMCPToolNames = new Set(this.#selectedMCPToolNames);
 		const activated: string[] = [];
@@ -3554,18 +3559,23 @@ export class AgentSession {
 
 		this.#setDiscoverableMCPTools(this.#collectDiscoverableMCPToolsFromRegistry());
 		this.#pruneSelectedMCPToolNames();
+		const configuredDefaultSelectedMCPToolNames = this.#getConfiguredDefaultSelectedMCPToolNames();
 		if (!this.buildDisplaySessionContext().hasPersistedMCPToolSelection) {
 			this.#selectedMCPToolNames = new Set([
 				...this.#selectedMCPToolNames,
-				...this.#getConfiguredDefaultSelectedMCPToolNames(),
+				...configuredDefaultSelectedMCPToolNames,
 			]);
 		}
-		this.#rememberSessionDefaultSelectedMCPToolNames(
-			this.sessionFile,
-			this.#getConfiguredDefaultSelectedMCPToolNames(),
-		);
+		this.#rememberSessionDefaultSelectedMCPToolNames(this.sessionFile, configuredDefaultSelectedMCPToolNames);
 
-		const nextActive = [...this.#getActiveNonMCPToolNames(), ...this.getSelectedMCPToolNames()];
+		const selectedMCPToolNames = this.#mcpDiscoveryEnabled
+			? this.getSelectedMCPToolNames()
+			: this.#filterSelectableMCPToolNames([
+					...previousSelectedMCPToolNames,
+					...configuredDefaultSelectedMCPToolNames,
+				]);
+
+		const nextActive = [...this.#getActiveNonMCPToolNames(), ...selectedMCPToolNames];
 		await this.#applyActiveToolsByName(nextActive, { previousSelectedMCPToolNames });
 	}
 
