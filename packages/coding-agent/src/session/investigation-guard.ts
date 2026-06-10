@@ -1,9 +1,25 @@
 import type { AfterToolCallContext, BeforeToolCallContext, BeforeToolCallResult } from "@oh-my-pi/pi-agent-core";
-import type { AssistantMessage, TextContent } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, TextContent, ToolResultMessage } from "@oh-my-pi/pi-ai";
 import { countTokens } from "@oh-my-pi/pi-natives";
 import type { Settings } from "../config/settings";
 
 const READ_TOOL_NAME = "read";
+
+/**
+ * Read-only tools whose calls count toward an investigation streak. A turn
+ * counts as "investigation" only when every tool it executed is in this table;
+ * any other tool (edit, write, bash, todo, task, MCP, ...) is treated as the
+ * agent making progress and resets the guard entirely.
+ */
+const INVESTIGATION_TOOLS: Record<string, true> = {
+	[READ_TOOL_NAME]: true,
+	search: true,
+	find: true,
+	ast_grep: true,
+	lsp: true,
+	web_search: true,
+	inspect_image: true,
+};
 
 /** Tool-choice queue label used when the investigation guard forces a synthesis turn. */
 export const INVESTIGATION_GUARD_TOOL_CHOICE_LABEL = "investigation-guard";
@@ -12,38 +28,54 @@ interface InvestigationGuardLimits {
 	enabled: boolean;
 	maxReadCalls: number;
 	maxReadTokens: number;
-	maxConsecutiveToolUseTurns: number;
+	maxInvestigationTurns: number;
 }
 
-type SynthesisTrigger = "read-call" | "read-token" | "consecutive-tool-use";
+type SynthesisTrigger = "read-call" | "read-token";
 
 /**
- * Tracks repeated investigation loops at two granularities and asks the model
- * to synthesize before context spirals:
+ * Detects unbounded investigation spirals (#2234: 77 consecutive read/search
+ * turns, zero text answers, context and thinking growing until the session
+ * went silent) and asks the model to synthesize before context blows up:
  *
- * - Per-prompt `read` budget: too many `read` calls or too many read-output
- *   tokens means the agent should stop pulling more files into context.
- * - Per-prompt consecutive-`toolUse` turn cap: every turn ending in `toolUse`
- *   indicates the agent never broke out to answer. Once the count crosses
- *   the configured threshold the next LLM call is forced with no tools so
- *   the model has to produce a text response.
+ * - Read budget per investigation streak: too many `read` calls or too many
+ *   read-output tokens means the agent should stop pulling more files into
+ *   context and answer from what it has.
+ * - Investigation-turn cap: consecutive assistant turns whose tool calls are
+ *   all read-only investigation tools. Once the cap is reached the next LLM
+ *   call is forced with `toolChoice: "none"` so the model must produce text.
+ *
+ * Any turn that executes a non-investigation tool resets all counters —
+ * normal coding work (read a few files, edit, run tests, read more) never
+ * accumulates a streak, no matter how long the session runs.
  */
 export class InvestigationGuard {
 	readonly #settings: Settings;
 	#readCalls = 0;
 	#readTokens = 0;
-	#consecutiveToolUseTurns = 0;
+	#investigationTurns = 0;
+	/**
+	 * Read calls that passed `beforeToolCall` but have not completed yet.
+	 * Same-message reads run concurrently, so the call budget must count
+	 * in-flight reads — `#readCalls` alone lags until results land. The token
+	 * budget cannot be projected the same way (output size is unknown until a
+	 * read completes), so within one concurrent batch it can overshoot by at
+	 * most the remaining call budget; the synthesis turn forced right after
+	 * the batch bounds the damage.
+	 */
+	readonly #pendingReads = new Set<string>();
 	#synthesisRequested = false;
 
 	constructor(settings: Settings) {
 		this.#settings = settings;
 	}
 
-	/** Clear per-prompt counters when a fresh user or synthetic turn starts. */
+	/** Clear all counters: new prompt, text answer, or a productive (non-investigation) turn. */
 	reset(): void {
 		this.#readCalls = 0;
 		this.#readTokens = 0;
-		this.#consecutiveToolUseTurns = 0;
+		this.#investigationTurns = 0;
+		this.#pendingReads.clear();
 		this.#synthesisRequested = false;
 	}
 
@@ -53,10 +85,13 @@ export class InvestigationGuard {
 		const limits = this.#limits();
 		if (!limits.enabled) return undefined;
 
-		const projectedReadCalls = this.#readCalls + this.#readOrdinalInAssistantMessage(ctx);
+		const projectedReadCalls = this.#readCalls + this.#pendingReads.size + 1;
 		const callLimitExceeded = projectedReadCalls > limits.maxReadCalls;
 		const tokenLimitExceeded = this.#readTokens >= limits.maxReadTokens;
-		if (!callLimitExceeded && !tokenLimitExceeded) return undefined;
+		if (!callLimitExceeded && !tokenLimitExceeded) {
+			this.#pendingReads.add(ctx.toolCall.id);
+			return undefined;
+		}
 
 		this.#synthesisRequested = true;
 		return {
@@ -67,7 +102,9 @@ export class InvestigationGuard {
 
 	/** Account for read-tool output and request synthesis once accumulated output crosses the token budget. */
 	afterToolCall(ctx: AfterToolCallContext): void {
-		if (ctx.toolCall.name !== READ_TOOL_NAME || ctx.isError) return;
+		if (ctx.toolCall.name !== READ_TOOL_NAME) return;
+		this.#pendingReads.delete(ctx.toolCall.id);
+		if (ctx.isError) return;
 		const limits = this.#limits();
 		if (!limits.enabled) return;
 
@@ -82,20 +119,30 @@ export class InvestigationGuard {
 	}
 
 	/**
-	 * Record an assistant turn's stop reason. A `toolUse` stop bumps the
-	 * consecutive-tool-use counter and may request synthesis; a clean `stop`
-	 * (text response) is treated as the agent breaking out of investigation
-	 * and clears all counters. `error`/`aborted` leaves counters untouched.
+	 * Classify a completed assistant turn by the tools it actually executed
+	 * (not `stopReason` — interleaved-thinking models routinely emit tool
+	 * calls under `end_turn`):
+	 *
+	 * - All executed tools are investigation tools → the streak grows and may
+	 *   request synthesis.
+	 * - Any non-investigation tool ran → the agent made progress; reset.
+	 * - No tools and a clean `stop` → the agent answered in text; reset.
+	 * - `error`/`aborted` turns leave counters untouched.
 	 */
-	noteAssistantStop(stopReason: AssistantMessage["stopReason"]): void {
-		if (stopReason === "toolUse") {
-			this.#consecutiveToolUseTurns++;
-			const limits = this.#limits();
-			if (limits.enabled && this.#consecutiveToolUseTurns >= limits.maxConsecutiveToolUseTurns) {
-				this.#synthesisRequested = true;
-			}
-		} else if (stopReason === "stop") {
+	noteTurnEnd(message: AssistantMessage, toolResults: readonly ToolResultMessage[]): void {
+		if (message.stopReason === "error" || message.stopReason === "aborted") return;
+		if (toolResults.length === 0) {
+			if (message.stopReason === "stop") this.reset();
+			return;
+		}
+		if (!toolResults.every(result => INVESTIGATION_TOOLS[result.toolName] === true)) {
 			this.reset();
+			return;
+		}
+		this.#investigationTurns++;
+		const limits = this.#limits();
+		if (limits.enabled && this.#investigationTurns >= limits.maxInvestigationTurns) {
+			this.#synthesisRequested = true;
 		}
 	}
 
@@ -109,35 +156,21 @@ export class InvestigationGuard {
 	#limits(): InvestigationGuardLimits {
 		const maxReadCalls = Math.max(1, Math.floor(this.#settings.get("investigationGuard.maxReadCalls")));
 		const maxReadTokens = Math.max(1, Math.floor(this.#settings.get("investigationGuard.maxReadTokens")));
-		const maxConsecutiveToolUseTurns = Math.max(
+		const maxInvestigationTurns = Math.max(
 			1,
-			Math.floor(this.#settings.get("investigationGuard.maxConsecutiveToolUseTurns")),
+			Math.floor(this.#settings.get("investigationGuard.maxInvestigationTurns")),
 		);
 		return {
 			enabled: this.#settings.get("investigationGuard.enabled"),
 			maxReadCalls,
 			maxReadTokens,
-			maxConsecutiveToolUseTurns,
+			maxInvestigationTurns,
 		};
-	}
-
-	#readOrdinalInAssistantMessage(ctx: BeforeToolCallContext): number {
-		let ordinal = 0;
-		for (const block of ctx.assistantMessage.content) {
-			if (block.type !== "toolCall" || block.name !== READ_TOOL_NAME) continue;
-			ordinal++;
-			if (block.id === ctx.toolCall.id) return ordinal;
-		}
-		return 1;
 	}
 
 	#blockReason(limits: InvestigationGuardLimits, trigger: SynthesisTrigger): string {
 		const detail =
-			trigger === "read-call"
-				? `${limits.maxReadCalls} read calls`
-				: trigger === "read-token"
-					? `${limits.maxReadTokens} read-output tokens`
-					: `${limits.maxConsecutiveToolUseTurns} consecutive tool-use turns`;
-		return `Read investigation limit reached after ${detail}. Stop reading more files and answer from the evidence already gathered; if exact missing lines are required, explain the narrow follow-up read instead of continuing the tool loop.`;
+			trigger === "read-call" ? `${limits.maxReadCalls} read calls` : `${limits.maxReadTokens} read-output tokens`;
+		return `Read investigation limit reached after ${detail} without intervening progress. Stop reading more files and answer from the evidence already gathered; if exact missing lines are required, explain the narrow follow-up read instead of continuing the tool loop.`;
 	}
 }

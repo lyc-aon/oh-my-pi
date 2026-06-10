@@ -1676,8 +1676,10 @@ export class AgentSession {
 			}
 		}
 		if (event.type === "turn_end") {
-			const msg = event.message as AssistantMessage;
-			this.#investigationGuard.noteAssistantStop(msg.stopReason);
+			// Synthesis is queued only here, after the turn's executed tools are
+			// known: a turn that ran any non-investigation tool resets the guard,
+			// which must win over a read budget crossed mid-batch in that turn.
+			this.#investigationGuard.noteTurnEnd(event.message as AssistantMessage, event.toolResults);
 			if (this.#investigationGuard.consumeSynthesisRequest()) {
 				this.#queueInvestigationGuardSynthesisTurn();
 			}
@@ -2231,18 +2233,11 @@ export class AgentSession {
 	}
 
 	#beforeToolCall(ctx: BeforeToolCallContext): BeforeToolCallResult | undefined {
-		const result = this.#investigationGuard.beforeToolCall(ctx);
-		if (this.#investigationGuard.consumeSynthesisRequest()) {
-			this.#queueInvestigationGuardSynthesisTurn();
-		}
-		return result;
+		return this.#investigationGuard.beforeToolCall(ctx);
 	}
 
 	#afterToolCall(ctx: AfterToolCallContext): AfterToolCallResult | undefined {
 		this.#investigationGuard.afterToolCall(ctx);
-		if (this.#investigationGuard.consumeSynthesisRequest()) {
-			this.#queueInvestigationGuardSynthesisTurn();
-		}
 		return this.#ttsrAfterToolCall(ctx);
 	}
 

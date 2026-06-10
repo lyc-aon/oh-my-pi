@@ -13,6 +13,7 @@ import { TempDir } from "@oh-my-pi/pi-utils";
 
 const readSchema = z.object({ path: z.string() });
 const searchSchema = z.object({ pattern: z.string() });
+const noteSchema = z.object({ text: z.string() });
 
 interface Harness {
 	session: AgentSession;
@@ -21,6 +22,7 @@ interface Harness {
 	mock: MockModel;
 	executedReads: string[];
 	executedSearches: string[];
+	executedNotes: string[];
 }
 
 interface HarnessOptions {
@@ -46,6 +48,7 @@ async function createHarness({ settings: settingsOverrides = {}, responses }: Ha
 
 	const executedReads: string[] = [];
 	const executedSearches: string[] = [];
+	const executedNotes: string[] = [];
 	const readTool: AgentTool<typeof readSchema> = {
 		name: "read",
 		label: "Read",
@@ -63,13 +66,22 @@ async function createHarness({ settings: settingsOverrides = {}, responses }: Ha
 		description: "Mock search tool",
 		parameters: searchSchema,
 		approval: "read",
-		execute: async (_toolCallId, params) => ({
-			content: [{ type: "text", text: `no hits for ${params.pattern}` }],
-		}),
+		execute: async (_toolCallId, params) => {
+			executedSearches.push(params.pattern);
+			return { content: [{ type: "text", text: `no hits for ${params.pattern}` }] };
+		},
 	};
-	searchTool.execute = async (_toolCallId, params) => {
-		executedSearches.push(params.pattern);
-		return { content: [{ type: "text", text: `no hits for ${params.pattern}` }] };
+	// Stand-in for a productive (non-investigation) tool such as edit/write/bash.
+	const noteTool: AgentTool<typeof noteSchema> = {
+		name: "note",
+		label: "Note",
+		description: "Mock productive tool",
+		parameters: noteSchema,
+		approval: "write",
+		execute: async (_toolCallId, params) => {
+			executedNotes.push(params.text);
+			return { content: [{ type: "text", text: `noted ${params.text}` }] };
+		},
 	};
 
 	const mock = createMockModel({ responses });
@@ -80,7 +92,7 @@ async function createHarness({ settings: settingsOverrides = {}, responses }: Ha
 		initialState: {
 			model: mock,
 			systemPrompt: ["Test"],
-			tools: [readTool, searchTool],
+			tools: [readTool, searchTool, noteTool],
 			messages: [],
 		},
 		convertToLlm,
@@ -96,10 +108,11 @@ async function createHarness({ settings: settingsOverrides = {}, responses }: Ha
 		toolRegistry: new Map<string, AgentTool>([
 			[readTool.name, readTool as AgentTool],
 			[searchTool.name, searchTool as AgentTool],
+			[noteTool.name, noteTool as AgentTool],
 		]),
 	});
 
-	return { session, tempDir, authStorage, mock, executedReads, executedSearches };
+	return { session, tempDir, authStorage, mock, executedReads, executedSearches, executedNotes };
 }
 
 afterEach(async () => {
@@ -141,7 +154,7 @@ it("forces a no-tool synthesis turn after the per-prompt read budget is exhauste
 	expect(JSON.stringify(blockedResult?.content)).toContain("Read investigation limit reached");
 });
 
-it("forces a no-tool synthesis turn after consecutive tool-use turns hit the cap", async () => {
+it("forces a no-tool synthesis turn after consecutive investigation-only turns hit the cap", async () => {
 	const spiralResponse = (turn: number): MockResponse => ({
 		content: [
 			{
@@ -154,7 +167,7 @@ it("forces a no-tool synthesis turn after consecutive tool-use turns hit the cap
 		stopReason: "toolUse",
 	});
 	harness = await createHarness({
-		settings: { "investigationGuard.maxConsecutiveToolUseTurns": 3 },
+		settings: { "investigationGuard.maxInvestigationTurns": 3 },
 		responses: [
 			spiralResponse(0),
 			spiralResponse(1),
@@ -172,4 +185,50 @@ it("forces a no-tool synthesis turn after consecutive tool-use turns hit the cap
 	expect(harness.mock.calls[1]?.options?.toolChoice).toBeUndefined();
 	expect(harness.mock.calls[2]?.options?.toolChoice).toBeUndefined();
 	expect(harness.mock.calls[3]?.options?.toolChoice).toBe("none");
+});
+
+it("resets the investigation streak when a turn runs a productive tool", async () => {
+	const searchResponse = (turn: number): MockResponse => ({
+		content: [
+			{
+				type: "toolCall" as const,
+				id: `search-${turn}`,
+				name: "search",
+				arguments: { pattern: `term-${turn}` },
+			},
+		],
+		stopReason: "toolUse",
+	});
+	const noteResponse = (turn: number): MockResponse => ({
+		content: [
+			{
+				type: "toolCall" as const,
+				id: `note-${turn}`,
+				name: "note",
+				arguments: { text: `progress-${turn}` },
+			},
+		],
+		stopReason: "toolUse",
+	});
+	harness = await createHarness({
+		settings: { "investigationGuard.maxInvestigationTurns": 3 },
+		responses: [
+			searchResponse(0),
+			searchResponse(1),
+			noteResponse(2),
+			searchResponse(3),
+			searchResponse(4),
+			{ content: ["Done."], stopReason: "stop" },
+		],
+	});
+
+	await harness.session.prompt("investigate and fix");
+	await harness.session.waitForIdle();
+
+	expect(harness.executedSearches).toEqual(["term-0", "term-1", "term-3", "term-4"]);
+	expect(harness.executedNotes).toEqual(["progress-2"]);
+	expect(harness.mock.calls).toHaveLength(6);
+	for (const call of harness.mock.calls) {
+		expect(call.options?.toolChoice).toBeUndefined();
+	}
 });

@@ -1976,22 +1976,23 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "tools",
 			label: "Investigation Guard",
-			description: "Force a no-tool synthesis turn when repeated read calls risk an investigation spiral",
+			description:
+				"Detect read/search-only investigation spirals and force a no-tool synthesis turn; any non-investigation tool (edit, bash, ...) resets the guard",
 		},
 	},
 
 	"investigationGuard.maxReadCalls": {
 		type: "number",
-		default: 12,
+		default: 40,
 		ui: {
 			tab: "tools",
 			label: "Investigation Guard Read Calls",
-			description: "Maximum read calls allowed in one investigation turn before forcing synthesis",
+			description: "Maximum read calls in one uninterrupted investigation streak before forcing synthesis",
 			options: [
-				{ value: "5", label: "5 reads" },
 				{ value: "12", label: "12 reads" },
-				{ value: "20", label: "20 reads" },
+				{ value: "25", label: "25 reads" },
 				{ value: "40", label: "40 reads" },
+				{ value: "80", label: "80 reads" },
 			],
 		},
 	},
@@ -2002,7 +2003,7 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "tools",
 			label: "Investigation Guard Read Tokens",
-			description: "Maximum read-output tokens allowed before forcing synthesis",
+			description: "Maximum read-output tokens in one uninterrupted investigation streak before forcing synthesis",
 			options: [
 				{ value: "40000", label: "40K tokens" },
 				{ value: "80000", label: "80K tokens" },
@@ -2011,14 +2012,14 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
-	"investigationGuard.maxConsecutiveToolUseTurns": {
+	"investigationGuard.maxInvestigationTurns": {
 		type: "number",
 		default: 15,
 		ui: {
 			tab: "tools",
-			label: "Investigation Guard Consecutive Tool Turns",
+			label: "Investigation Guard Turns",
 			description:
-				"After this many assistant turns in a row end in a tool call, the next model call is forced with no tools so the agent answers from what it already has",
+				"After this many consecutive assistant turns whose tool calls are all read-only investigation tools (read, search, find, lsp, ...), the next model call is forced with no tools so the agent answers from what it already has",
 			options: [
 				{ value: "10", label: "10 turns" },
 				{ value: "15", label: "15 turns" },
