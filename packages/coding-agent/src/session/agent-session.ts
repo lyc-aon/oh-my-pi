@@ -272,6 +272,7 @@ import {
 	type BashExecutionMessage,
 	type CustomMessage,
 	convertToLlm,
+	GENERIC_ABORT_SENTINEL,
 	type PythonExecutionMessage,
 	readQueueChipText,
 	SILENT_ABORT_MARKER,
@@ -2353,6 +2354,11 @@ export class AgentSession {
 			}
 			if (await this.#handleUnexpectedAssistantStop(msg)) {
 				return;
+			}
+
+			if (this.#isRetryableReasonlessAbort(msg)) {
+				const didRetry = await this.#handleRetryableError(msg, { allowModelFallback: false });
+				if (didRetry) return;
 			}
 
 			// A deliberate abort should settle the current turn, not trigger queued continuations.
@@ -9061,9 +9067,18 @@ export class AgentSession {
 
 	/**
 	 * Check if an error is retryable (transient errors or usage limits).
-	 * Context overflow errors are NOT retryable (handled by compaction instead).
+	 * Context overflow is NOT retryable (handled by compaction instead).
 	 * Usage-limit errors are retryable because the retry handler performs credential switching.
 	 */
+	#isRetryableReasonlessAbort(message: AssistantMessage): boolean {
+		return (
+			message.stopReason === "aborted" &&
+			message.content.length === 0 &&
+			message.errorMessage === GENERIC_ABORT_SENTINEL &&
+			!this.#abortInProgress
+		);
+	}
+
 	#isRetryableError(message: AssistantMessage): boolean {
 		if (message.stopReason !== "error" || !message.errorMessage) return false;
 
@@ -9402,7 +9417,10 @@ export class AgentSession {
 	 * Handle retryable errors with exponential backoff.
 	 * @returns true if retry was initiated, false if max retries exceeded or disabled
 	 */
-	async #handleRetryableError(message: AssistantMessage): Promise<boolean> {
+	async #handleRetryableError(
+		message: AssistantMessage,
+		options?: { allowModelFallback?: boolean },
+	): Promise<boolean> {
 		const retrySettings = this.settings.getGroup("retry");
 		if (!retrySettings.enabled) return false;
 		const classifierRefusal = this.#isClassifierRefusal(message);
@@ -9490,9 +9508,10 @@ export class AgentSession {
 			}
 		}
 
+		const allowModelFallback = options?.allowModelFallback !== false;
 		const currentSelector = this.model ? formatRetryFallbackSelector(this.model, this.thinkingLevel) : undefined;
 		if (!staleOpenAIResponsesReplayError && !switchedCredential && currentSelector) {
-			if (retrySettings.modelFallback) {
+			if (allowModelFallback && retrySettings.modelFallback) {
 				if (!classifierRefusal) {
 					this.#noteRetryFallbackCooldown(currentSelector, parsedRetryAfterMs, errorMessage);
 				}
