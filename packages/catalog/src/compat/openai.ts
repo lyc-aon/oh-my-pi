@@ -215,6 +215,7 @@ export function buildOpenAICompat(spec: ModelSpec<"openai-completions">): Resolv
 		// before the final answer.
 		alwaysSendMaxTokens: isKimiModel,
 		disableReasoningOnForcedToolChoice: isKimiModel || isAnthropicModel,
+		disableReasoningWhenToolsPresent: isDirectDeepseekReasoning,
 		disableReasoningOnToolChoice: isDeepseekFamily && Boolean(spec.reasoning) && !isOpenRouter,
 		supportsToolChoice: !isDirectDeepseekReasoning,
 		supportsForcedToolChoice: true,

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+
+### Fixed
+
+- Fixed direct DeepSeek V4 tool requests to suppress reasoning payload fields when tools are present, so advisor-style calls can reach the tool-capable backend instead of spending output on text. ([#2690](https://github.com/can1357/oh-my-pi/issues/2690))
+
 ## [16.0.0] - 2026-06-15
 
 ### Breaking Changes

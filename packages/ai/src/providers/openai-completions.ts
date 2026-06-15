@@ -1231,8 +1231,10 @@ function buildParams(
 	toolStrictModeOverride?: ToolStrictModeOverride,
 ): { params: OpenAICompletionsParams; toolStrictMode: AppliedToolStrictMode; strictToolsApplied: boolean } {
 	let compat = model.compat;
+	const disableReasoningForTools = compat.disableReasoningWhenToolsPresent && (context.tools?.length ?? 0) > 0;
+	const reasoningDisabledForRequest = Boolean(options?.disableReasoning) || disableReasoningForTools;
 	const thinkingEnabledForRequest =
-		Boolean(options?.reasoning) && !options?.disableReasoning && Boolean(model.reasoning);
+		Boolean(options?.reasoning) && !reasoningDisabledForRequest && Boolean(model.reasoning);
 	const forcedToolChoiceSuppressesThinking =
 		compat.disableReasoningOnForcedToolChoice &&
 		compat.supportsForcedToolChoice &&
@@ -1372,17 +1374,16 @@ function buildParams(
 	if (supportsReasoningParams && compat.thinkingFormat === "zai" && model.reasoning) {
 		// Z.ai uses binary thinking: { type: "enabled" | "disabled" }
 		// Must explicitly disable since z.ai defaults to thinking enabled.
-		const enabled = options?.reasoning && !options?.disableReasoning;
+		const enabled = options?.reasoning && !reasoningDisabledForRequest;
 		params.thinking = { type: enabled ? "enabled" : "disabled" };
 		if (enabled && compat.thinkingKeep) {
 			params.thinking.keep = compat.thinkingKeep;
 		}
 	} else if (supportsReasoningParams && compat.thinkingFormat === "qwen" && model.reasoning) {
-		// Qwen uses top-level enable_thinking: boolean
-		params.enable_thinking = !!options?.reasoning && !options?.disableReasoning;
+		params.enable_thinking = !!options?.reasoning && !reasoningDisabledForRequest;
 	} else if (supportsReasoningParams && compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
 		params.chat_template_kwargs = {
-			enable_thinking: !!options?.reasoning && !options?.disableReasoning,
+			enable_thinking: !!options?.reasoning && !reasoningDisabledForRequest,
 		};
 	} else if (supportsReasoningParams && compat.thinkingFormat === "openrouter" && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
@@ -1392,7 +1393,7 @@ function buildParams(
 		const openRouterParams = params as typeof params & {
 			reasoning?: { effort?: string } | { enabled: false };
 		};
-		if (options?.disableReasoning) {
+		if (reasoningDisabledForRequest) {
 			openRouterParams.reasoning = { enabled: false };
 		} else if (options?.reasoning) {
 			openRouterParams.reasoning = {
@@ -1405,7 +1406,7 @@ function buildParams(
 	} else if (
 		supportsReasoningParams &&
 		options?.reasoning &&
-		!options?.disableReasoning &&
+		!reasoningDisabledForRequest &&
 		model.reasoning &&
 		compat.supportsReasoningEffort
 	) {
@@ -1469,6 +1470,11 @@ function buildParams(
 
 	if (compat.extraBody) {
 		Object.assign(params, compat.extraBody);
+		if (reasoningDisabledForRequest) {
+			delete params.thinking;
+			delete params.enable_thinking;
+			delete params.chat_template_kwargs;
+		}
 		if (model.provider === "fireworks" && params.reasoning_effort !== undefined) {
 			// Fireworks rejects simultaneous DeepSeek-style `thinking` toggles and
 			// OpenAI-style `reasoning_effort`; the effort field carries the user's level.

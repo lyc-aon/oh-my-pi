@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+
+### Fixed
+
+- Fixed direct DeepSeek V4 OpenAI-compatible metadata to flag tool-bearing requests as reasoning-disabled, matching the provider backend split used by advisor tool calls. ([#2690](https://github.com/can1357/oh-my-pi/issues/2690))
+
 ## [16.0.0] - 2026-06-15
 
 ### Breaking Changes
