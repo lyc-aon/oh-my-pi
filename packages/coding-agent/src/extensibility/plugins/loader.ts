@@ -146,7 +146,10 @@ export async function getEnabledPlugins(cwd: string, opts: { home?: string } = {
 const MANIFEST_ENTRY_INDEX_NAMES = ["index.ts", "index.js", "index.mjs", "index.cjs"];
 
 function isManifestEntryFile(name: string): boolean {
-	return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs") || name.endsWith(".cjs");
+	return (
+		!name.endsWith(".d.ts") &&
+		(name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs") || name.endsWith(".cjs"))
+	);
 }
 
 function resolveManifestEntryIndex(dir: string): string | null {

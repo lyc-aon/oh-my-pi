@@ -98,6 +98,14 @@ describe("PluginManager.install load validation", () => {
 					path.join(installedDir, "extensions", "wiki", "index.ts"),
 					'export default function(pi) { pi.registerCommand("wiki-ext", { handler: async () => {} }); }\n',
 				);
+				await Bun.write(
+					path.join(installedDir, "extensions", "direct.js"),
+					'export default function(pi) { pi.registerCommand("direct-ext", { handler: async () => {} }); }\n',
+				);
+				await Bun.write(
+					path.join(installedDir, "extensions", "direct.d.ts"),
+					"export interface IgnoredDeclaration {}\n",
+				);
 			})();
 
 			return {

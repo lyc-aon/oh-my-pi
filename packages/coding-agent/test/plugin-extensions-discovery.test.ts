@@ -108,6 +108,7 @@ describe("plugin extension discovery", () => {
 				}
 			`,
 		);
+		fs.writeFileSync(path.join(pluginDir, "extensions", "direct.d.ts"), "export interface IgnoredDeclaration {}\n");
 
 		const result = await discoverAndLoadExtensions([], projectDir.path());
 		const directExtension = result.extensions.find(ext => ext.path === directExtensionPath);
