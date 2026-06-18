@@ -1,0 +1,349 @@
+{
+  "generatedAt": "2026-06-18T01:58:24.415Z",
+  "repoRoot": "/home/lycaon/dev/ai/oh-my-pi",
+  "outputDirectory": "/home/lycaon/dev/ai/oh-my-pi/python/robomp/web/verify-out/robomp-lifecycle-cards-compare/20260618-origin-main-vs-working-tree",
+  "baselineRef": "origin/main@159b8a1c639acf647baab6c6bf6c552eddd8ea88",
+  "currentRef": "working-tree@fe80a2cf72bc9f8d9d795f94ddd58c6686e7e636+uncommitted",
+  "captureTool": "/tmp/capture-robomp-compare.ts",
+  "browser": {
+    "executablePath": "/usr/bin/google-chrome-stable",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36"
+  },
+  "interceptionPolicy": "/api/status fixture, /api/logs empty, /api/github/issues empty; document config injection per shot; no live DB used for paired screenshots",
+  "fixtureHashes": {
+    "base-status.json": "2dc5d4d5f626509ab05d2693679be6ea9afb30a453e26cc404b27b2b6a0e777d",
+    "empty-allowlist-status.json": "2e16df10d05e1778019cbb21a94568e3c60afd6c0cf4e39b0efe70b752b9d262",
+    "populated-status.json": "222a908dc65ace182677bef7304865cfb4d3daeb30078eef9c1325bde4b9e695"
+  },
+  "matrix": [
+    {
+      "file": "01-desktop-populated-replay-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "tokenPresent": true
+    },
+    {
+      "file": "02-desktop-populated-replay-light.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "light",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "tokenPresent": true
+    },
+    {
+      "file": "03-desktop-populated-readonly-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": false,
+      "delayMs": 0,
+      "skeleton": false,
+      "tokenPresent": false
+    },
+    {
+      "file": "04-desktop-empty-replay-dark.png",
+      "fixtureName": "empty-allowlist-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "tokenPresent": true
+    },
+    {
+      "file": "05-mobile-populated-replay-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 380,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "tokenPresent": true
+    },
+    {
+      "file": "06-desktop-skeleton-replay-dark.png",
+      "fixtureName": "base-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 800,
+      "skeleton": true,
+      "tokenPresent": true
+    }
+  ],
+  "captures": {
+    "oldOriginMain": {
+      "sideName": "old-origin-main",
+      "baseUrl": "http://127.0.0.1:8098/",
+      "sourceRef": "origin/main@159b8a1c639acf647baab6c6bf6c552eddd8ea88",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+      "shots": [
+        {
+          "file": "01-desktop-populated-replay-dark.png",
+          "fixtureName": "populated-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": true,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "old-origin-main/01-desktop-populated-replay-dark.png",
+          "bytes": 82192,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nCURRENTLY WORKING\n4\nISSUE\tEVENT\tSTATE\tEL",
+            "cardCount": 0,
+            "oldTableRows": 16,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        },
+        {
+          "file": "02-desktop-populated-replay-light.png",
+          "fixtureName": "populated-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "light",
+          "replayEnabled": true,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "old-origin-main/02-desktop-populated-replay-light.png",
+          "bytes": 82186,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nCURRENTLY WORKING\n4\nISSUE\tEVENT\tSTATE\tEL",
+            "cardCount": 0,
+            "oldTableRows": 16,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        },
+        {
+          "file": "03-desktop-populated-readonly-dark.png",
+          "fixtureName": "populated-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": false,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "old-origin-main/03-desktop-populated-readonly-dark.png",
+          "bytes": 87589,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget\nread-only · trigger disabled\nTRIGGER\nowner/repo#NN or issue url\ntrigger disabled. set ROBOMP_REPLAY_TOKEN in the server env to enable manual triage and retry actions.\nBROWSE\n0/0 from (allowlist empty)\nissue browser disabled — same gate as the trigger surface.\nQUEUED\n1\nRUNNING",
+            "cardCount": 0,
+            "oldTableRows": 16,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        },
+        {
+          "file": "04-desktop-empty-replay-dark.png",
+          "fixtureName": "empty-allowlist-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": true,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "old-origin-main/04-desktop-empty-replay-dark.png",
+          "bytes": 73384,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget, octo/robomp\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n0\nRUNNING\n0\nDONE\n0\nFAILED\n0\nSKIPPED\n0\nCURRENTLY WORKING\n0\nidle — ",
+            "cardCount": 0,
+            "oldTableRows": 0,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        },
+        {
+          "file": "05-mobile-populated-replay-dark.png",
+          "fixtureName": "populated-status.json",
+          "width": 380,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": true,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "old-origin-main/05-mobile-populated-replay-dark.png",
+          "bytes": 51091,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nCURRENTLY WORKING\n4\nISSUE\tEVENT\tSTATE\tEL",
+            "cardCount": 0,
+            "oldTableRows": 16,
+            "bodyScrollWidth": 380,
+            "bodyClientWidth": 380
+          }
+        },
+        {
+          "file": "06-desktop-skeleton-replay-dark.png",
+          "fixtureName": "base-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": true,
+          "delayMs": 800,
+          "skeleton": true,
+          "path": "old-origin-main/06-desktop-skeleton-replay-dark.png",
+          "bytes": 77547,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\n…\nMODEL\n…\nCONCURRENCY\n…\nUPTIME\n…\nALLOWLIST\n(none)\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n0\nRUNNING\n0\nDONE\n0\nFAILED\n0\nSKIPPED\n0\nCURRENTLY WORKING\n0\nidle — waiting for events\nACTIVE ISSUES\n0\nno ac",
+            "cardCount": 0,
+            "oldTableRows": 0,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        }
+      ],
+      "consoleErrors": [],
+      "failedRequests": []
+    },
+    "newWorkingTree": {
+      "sideName": "new-working-tree",
+      "baseUrl": "http://127.0.0.1:8099/",
+      "sourceRef": "working-tree@fe80a2cf72bc9f8d9d795f94ddd58c6686e7e636+uncommitted",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+      "shots": [
+        {
+          "file": "01-desktop-populated-replay-dark.png",
+          "fixtureName": "populated-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": true,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "new-working-tree/01-desktop-populated-replay-dark.png",
+          "bytes": 79382,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n4\nFAILED\n2\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONC\n1\nUP\n2m 0s\nREPOS\nocto/widget\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREPLAY ON\ntriage\nretry latest\nPIPELINE\n10\nbug\nocto/widget#1\nfailed\nnew\nreproducing\nfixing\nPR\ndone\ntriage failed error\nretry\nbug\nocto/widget#8\nfailed\nnew\nreproducing\nfixing\nPR\ndon",
+            "cardCount": 10,
+            "oldTableRows": 3,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        },
+        {
+          "file": "02-desktop-populated-replay-light.png",
+          "fixtureName": "populated-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "light",
+          "replayEnabled": true,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "new-working-tree/02-desktop-populated-replay-light.png",
+          "bytes": 79880,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n4\nFAILED\n2\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONC\n1\nUP\n2m 0s\nREPOS\nocto/widget\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREPLAY ON\ntriage\nretry latest\nPIPELINE\n10\nbug\nocto/widget#1\nfailed\nnew\nreproducing\nfixing\nPR\ndone\ntriage failed error\nretry\nbug\nocto/widget#8\nfailed\nnew\nreproducing\nfixing\nPR\ndon",
+            "cardCount": 10,
+            "oldTableRows": 3,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        },
+        {
+          "file": "03-desktop-populated-readonly-dark.png",
+          "fixtureName": "populated-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": false,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "new-working-tree/03-desktop-populated-readonly-dark.png",
+          "bytes": 85473,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n4\nFAILED\n2\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONC\n1\nUP\n2m 0s\nREPOS\nocto/widget\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREAD-ONLY · REPLAY OFF\nTRIGGER DISABLED · READ-ONLY\nset ROBOMP_REPLAY_TOKEN to enable\nPIPELINE\n10\nbug\nocto/widget#1\nfailed\nnew\nreproducing\nfixing\nPR\ndone\ntriage failed error\nbug\n",
+            "cardCount": 10,
+            "oldTableRows": 3,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        },
+        {
+          "file": "04-desktop-empty-replay-dark.png",
+          "fixtureName": "empty-allowlist-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": true,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "new-working-tree/04-desktop-empty-replay-dark.png",
+          "bytes": 43549,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n0\nFAILED\n0\nQUEUED\n0\nRUNNING\n0\nDONE\n0\nFAILED\n0\nSKIPPED\n0\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONC\n1\nUP\n2m 0s\nREPOS\nocto/widget, octo/robomp\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREPLAY ON\ntriage\nretry latest\nNo active work — robomp is idle, waiting for GitHub webhook events\nwatching octo/widget, octo/robomp",
+            "cardCount": 0,
+            "oldTableRows": 0,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        },
+        {
+          "file": "05-mobile-populated-replay-dark.png",
+          "fixtureName": "populated-status.json",
+          "width": 380,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": true,
+          "delayMs": 0,
+          "skeleton": false,
+          "path": "new-working-tree/05-mobile-populated-replay-dark.png",
+          "bytes": 31414,
+          "summary": {
+            "title": "robomp",
+            "textSample": "Operations\nREPLAY ON\ntriage\nretry latest\nPIPELINE\n10\nbug\nocto/widget#1\nfailed\nnew\nreproducing\nfixing\nPR\ndone\ntriage failed error\nretry\nbug\nocto/widget#8\nfailed\nnew\nreproducing\nfixing\nPR\ndone\nretry\nfail-del\nfailed\norphan failed error\nretry\nbug\nocto/widget#2\nrunning\nnew\nreproducing\nfixing\nPR\ndone\nclaude-3-5\nlast action edit 1h 57m ago\nelapsed 1h 57m\nattempt #1\nfix-branch\n#42\ncancel\nrun-del-\nrunning\n",
+            "cardCount": 10,
+            "oldTableRows": 3,
+            "bodyScrollWidth": 380,
+            "bodyClientWidth": 380
+          }
+        },
+        {
+          "file": "06-desktop-skeleton-replay-dark.png",
+          "fixtureName": "base-status.json",
+          "width": 1280,
+          "height": 720,
+          "theme": "dark",
+          "replayEnabled": true,
+          "delayMs": 800,
+          "skeleton": true,
+          "path": "new-working-tree/06-desktop-skeleton-replay-dark.png",
+          "bytes": 33647,
+          "summary": {
+            "title": "robomp",
+            "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n0\nFAILED\n0\nQUEUED\n0\nRUNNING\n0\nDONE\n0\nFAILED\n0\nSKIPPED\n0\nBOT\n—\nMODEL\n—\nCONC\n—\nUP\n—\nREPOS\n(none)\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREPLAY ON\ntriage\nretry latest",
+            "cardCount": 0,
+            "oldTableRows": 0,
+            "bodyScrollWidth": 1280,
+            "bodyClientWidth": 1280
+          }
+        }
+      ],
+      "consoleErrors": [],
+      "failedRequests": []
+    }
+  },
+  "oldUiCompatibility": "origin/main predates lifecycle cards; packet is 1:1 by input fixture/viewport/theme/config, not by lifecycle-card selectors. New-only .rmp-card states are recorded as cardCount=0 on old screenshots when absent."
+}

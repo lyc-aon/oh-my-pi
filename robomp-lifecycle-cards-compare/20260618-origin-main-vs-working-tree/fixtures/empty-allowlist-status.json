@@ -1,0 +1,31 @@
+{
+  "runtime": {
+    "bot_login": "robomp-bot",
+    "repo_allowlist": [
+      "octo/widget",
+      "octo/robomp"
+    ],
+    "max_concurrency": 1,
+    "model": "test-model",
+    "thinking_level": "low",
+    "uptime_seconds": 120
+  },
+  "event_counts": {
+    "queued": 0,
+    "running": 0,
+    "done": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "issue_event_counts": {
+    "queued": 0,
+    "running": 0,
+    "done": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "running_events": [],
+  "inflight": [],
+  "issues": [],
+  "recent_events": []
+}

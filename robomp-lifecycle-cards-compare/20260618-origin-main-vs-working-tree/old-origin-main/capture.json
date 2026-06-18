@@ -1,0 +1,130 @@
+{
+  "sideName": "old-origin-main",
+  "baseUrl": "http://127.0.0.1:8098/",
+  "sourceRef": "origin/main@159b8a1c639acf647baab6c6bf6c552eddd8ea88",
+  "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+  "shots": [
+    {
+      "file": "01-desktop-populated-replay-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "old-origin-main/01-desktop-populated-replay-dark.png",
+      "bytes": 82192,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nCURRENTLY WORKING\n4\nISSUE\tEVENT\tSTATE\tEL",
+        "cardCount": 0,
+        "oldTableRows": 16,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    },
+    {
+      "file": "02-desktop-populated-replay-light.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "light",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "old-origin-main/02-desktop-populated-replay-light.png",
+      "bytes": 82186,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nCURRENTLY WORKING\n4\nISSUE\tEVENT\tSTATE\tEL",
+        "cardCount": 0,
+        "oldTableRows": 16,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    },
+    {
+      "file": "03-desktop-populated-readonly-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": false,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "old-origin-main/03-desktop-populated-readonly-dark.png",
+      "bytes": 87589,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget\nread-only · trigger disabled\nTRIGGER\nowner/repo#NN or issue url\ntrigger disabled. set ROBOMP_REPLAY_TOKEN in the server env to enable manual triage and retry actions.\nBROWSE\n0/0 from (allowlist empty)\nissue browser disabled — same gate as the trigger surface.\nQUEUED\n1\nRUNNING",
+        "cardCount": 0,
+        "oldTableRows": 16,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    },
+    {
+      "file": "04-desktop-empty-replay-dark.png",
+      "fixtureName": "empty-allowlist-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "old-origin-main/04-desktop-empty-replay-dark.png",
+      "bytes": 73384,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget, octo/robomp\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n0\nRUNNING\n0\nDONE\n0\nFAILED\n0\nSKIPPED\n0\nCURRENTLY WORKING\n0\nidle — ",
+        "cardCount": 0,
+        "oldTableRows": 0,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    },
+    {
+      "file": "05-mobile-populated-replay-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 380,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "old-origin-main/05-mobile-populated-replay-dark.png",
+      "bytes": 51091,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONCURRENCY\n1\nUPTIME\n2m 0s\nALLOWLIST\nocto/widget\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nCURRENTLY WORKING\n4\nISSUE\tEVENT\tSTATE\tEL",
+        "cardCount": 0,
+        "oldTableRows": 16,
+        "bodyScrollWidth": 380,
+        "bodyClientWidth": 380
+      }
+    },
+    {
+      "file": "06-desktop-skeleton-replay-dark.png",
+      "fixtureName": "base-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 800,
+      "skeleton": true,
+      "path": "old-origin-main/06-desktop-skeleton-replay-dark.png",
+      "bytes": 77547,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nBOT\n…\nMODEL\n…\nCONCURRENCY\n…\nUPTIME\n…\nALLOWLIST\n(none)\nTRIGGER\nowner/repo#NN or issue url\nfetch & triage\nretry latest run\nenter owner/repo#NN or github issue url\nBROWSE\n0/0 from (allowlist empty)\nopen\nclosed\nall\nhide processed\nloading…\nno issues\nQUEUED\n0\nRUNNING\n0\nDONE\n0\nFAILED\n0\nSKIPPED\n0\nCURRENTLY WORKING\n0\nidle — waiting for events\nACTIVE ISSUES\n0\nno ac",
+        "cardCount": 0,
+        "oldTableRows": 0,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    }
+  ],
+  "consoleErrors": [],
+  "failedRequests": []
+}

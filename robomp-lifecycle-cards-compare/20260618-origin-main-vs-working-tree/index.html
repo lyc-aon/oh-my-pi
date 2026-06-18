@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Robomp lifecycle cards comparison</title>
+  <style>
+    body { margin: 0; padding: 24px; background: #0d0f14; color: #f5f0ff; font: 14px/1.45 system-ui, sans-serif; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    .meta { color: #b8accd; margin-bottom: 20px; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0 34px; }
+    .shot { border: 1px solid #302a3c; border-radius: 12px; overflow: hidden; background: #15131d; }
+    .shot h3 { margin: 0; padding: 10px 12px; font-size: 13px; color: #d7c9ff; border-bottom: 1px solid #302a3c; }
+    img { display: block; width: 100%; height: auto; }
+    code { color: #ffd6ff; }
+  </style>
+</head>
+<body>
+  <h1>Robomp old origin/main vs working-tree lifecycle UI</h1>
+  <div class="meta">Baseline: <code>origin/main@159b8a1c639acf647baab6c6bf6c552eddd8ea88</code>. Current: <code>working-tree@fe80a2cf72bc9f8d9d795f94ddd58c6686e7e636+uncommitted</code>. Manifest: <code>packet.json</code>.</div>
+  <section><h2>01 desktop populated replay dark</h2><div class="pair"><div class="shot"><h3>old-origin-main</h3><img src="old-origin-main/01-desktop-populated-replay-dark.png" /></div><div class="shot"><h3>new-working-tree</h3><img src="new-working-tree/01-desktop-populated-replay-dark.png" /></div></div></section>
+  <section><h2>02 desktop populated replay light</h2><div class="pair"><div class="shot"><h3>old-origin-main</h3><img src="old-origin-main/02-desktop-populated-replay-light.png" /></div><div class="shot"><h3>new-working-tree</h3><img src="new-working-tree/02-desktop-populated-replay-light.png" /></div></div></section>
+  <section><h2>03 desktop populated readonly dark</h2><div class="pair"><div class="shot"><h3>old-origin-main</h3><img src="old-origin-main/03-desktop-populated-readonly-dark.png" /></div><div class="shot"><h3>new-working-tree</h3><img src="new-working-tree/03-desktop-populated-readonly-dark.png" /></div></div></section>
+  <section><h2>04 desktop empty replay dark</h2><div class="pair"><div class="shot"><h3>old-origin-main</h3><img src="old-origin-main/04-desktop-empty-replay-dark.png" /></div><div class="shot"><h3>new-working-tree</h3><img src="new-working-tree/04-desktop-empty-replay-dark.png" /></div></div></section>
+  <section><h2>05 mobile populated replay dark</h2><div class="pair"><div class="shot"><h3>old-origin-main</h3><img src="old-origin-main/05-mobile-populated-replay-dark.png" /></div><div class="shot"><h3>new-working-tree</h3><img src="new-working-tree/05-mobile-populated-replay-dark.png" /></div></div></section>
+  <section><h2>06 desktop skeleton replay dark</h2><div class="pair"><div class="shot"><h3>old-origin-main</h3><img src="old-origin-main/06-desktop-skeleton-replay-dark.png" /></div><div class="shot"><h3>new-working-tree</h3><img src="new-working-tree/06-desktop-skeleton-replay-dark.png" /></div></div></section>
+</body>
+</html>

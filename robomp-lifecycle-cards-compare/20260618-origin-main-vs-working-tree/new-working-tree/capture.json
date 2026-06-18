@@ -1,0 +1,130 @@
+{
+  "sideName": "new-working-tree",
+  "baseUrl": "http://127.0.0.1:8099/",
+  "sourceRef": "working-tree@fe80a2cf72bc9f8d9d795f94ddd58c6686e7e636+uncommitted",
+  "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+  "shots": [
+    {
+      "file": "01-desktop-populated-replay-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "new-working-tree/01-desktop-populated-replay-dark.png",
+      "bytes": 79382,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n4\nFAILED\n2\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONC\n1\nUP\n2m 0s\nREPOS\nocto/widget\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREPLAY ON\ntriage\nretry latest\nPIPELINE\n10\nbug\nocto/widget#1\nfailed\nnew\nreproducing\nfixing\nPR\ndone\ntriage failed error\nretry\nbug\nocto/widget#8\nfailed\nnew\nreproducing\nfixing\nPR\ndon",
+        "cardCount": 10,
+        "oldTableRows": 3,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    },
+    {
+      "file": "02-desktop-populated-replay-light.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "light",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "new-working-tree/02-desktop-populated-replay-light.png",
+      "bytes": 79880,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n4\nFAILED\n2\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONC\n1\nUP\n2m 0s\nREPOS\nocto/widget\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREPLAY ON\ntriage\nretry latest\nPIPELINE\n10\nbug\nocto/widget#1\nfailed\nnew\nreproducing\nfixing\nPR\ndone\ntriage failed error\nretry\nbug\nocto/widget#8\nfailed\nnew\nreproducing\nfixing\nPR\ndon",
+        "cardCount": 10,
+        "oldTableRows": 3,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    },
+    {
+      "file": "03-desktop-populated-readonly-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": false,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "new-working-tree/03-desktop-populated-readonly-dark.png",
+      "bytes": 85473,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n4\nFAILED\n2\nQUEUED\n1\nRUNNING\n1\nDONE\n0\nFAILED\n2\nSKIPPED\n0\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONC\n1\nUP\n2m 0s\nREPOS\nocto/widget\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREAD-ONLY · REPLAY OFF\nTRIGGER DISABLED · READ-ONLY\nset ROBOMP_REPLAY_TOKEN to enable\nPIPELINE\n10\nbug\nocto/widget#1\nfailed\nnew\nreproducing\nfixing\nPR\ndone\ntriage failed error\nbug\n",
+        "cardCount": 10,
+        "oldTableRows": 3,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    },
+    {
+      "file": "04-desktop-empty-replay-dark.png",
+      "fixtureName": "empty-allowlist-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "new-working-tree/04-desktop-empty-replay-dark.png",
+      "bytes": 43549,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n0\nFAILED\n0\nQUEUED\n0\nRUNNING\n0\nDONE\n0\nFAILED\n0\nSKIPPED\n0\nBOT\nrobomp-bot\nMODEL\ntest-model\nCONC\n1\nUP\n2m 0s\nREPOS\nocto/widget, octo/robomp\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREPLAY ON\ntriage\nretry latest\nNo active work — robomp is idle, waiting for GitHub webhook events\nwatching octo/widget, octo/robomp",
+        "cardCount": 0,
+        "oldTableRows": 0,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    },
+    {
+      "file": "05-mobile-populated-replay-dark.png",
+      "fixtureName": "populated-status.json",
+      "width": 380,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 0,
+      "skeleton": false,
+      "path": "new-working-tree/05-mobile-populated-replay-dark.png",
+      "bytes": 31414,
+      "summary": {
+        "title": "robomp",
+        "textSample": "Operations\nREPLAY ON\ntriage\nretry latest\nPIPELINE\n10\nbug\nocto/widget#1\nfailed\nnew\nreproducing\nfixing\nPR\ndone\ntriage failed error\nretry\nbug\nocto/widget#8\nfailed\nnew\nreproducing\nfixing\nPR\ndone\nretry\nfail-del\nfailed\norphan failed error\nretry\nbug\nocto/widget#2\nrunning\nnew\nreproducing\nfixing\nPR\ndone\nclaude-3-5\nlast action edit 1h 57m ago\nelapsed 1h 57m\nattempt #1\nfix-branch\n#42\ncancel\nrun-del-\nrunning\n",
+        "cardCount": 10,
+        "oldTableRows": 3,
+        "bodyScrollWidth": 380,
+        "bodyClientWidth": 380
+      }
+    },
+    {
+      "file": "06-desktop-skeleton-replay-dark.png",
+      "fixtureName": "base-status.json",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "replayEnabled": true,
+      "delayMs": 800,
+      "skeleton": true,
+      "path": "new-working-tree/06-desktop-skeleton-replay-dark.png",
+      "bytes": 33647,
+      "summary": {
+        "title": "robomp",
+        "textSample": "robomp\nTRIAGE · FIX · SHIP\nsynced just now\nRUNNING\n0\nFAILED\n0\nQUEUED\n0\nRUNNING\n0\nDONE\n0\nFAILED\n0\nSKIPPED\n0\nBOT\n—\nMODEL\n—\nCONC\n—\nUP\n—\nREPOS\n(none)\nOperations\nActivity\nTriage\nPOLLING 3S\nOperations\nREPLAY ON\ntriage\nretry latest",
+        "cardCount": 0,
+        "oldTableRows": 0,
+        "bodyScrollWidth": 1280,
+        "bodyClientWidth": 1280
+      }
+    }
+  ],
+  "consoleErrors": [],
+  "failedRequests": []
+}

@@ -1,0 +1,211 @@
+{
+  "runtime": {
+    "bot_login": "robomp-bot",
+    "repo_allowlist": [
+      "octo/widget"
+    ],
+    "max_concurrency": 1,
+    "model": "test-model",
+    "thinking_level": "low",
+    "uptime_seconds": 120
+  },
+  "event_counts": {
+    "queued": 1,
+    "running": 1,
+    "done": 0,
+    "failed": 2,
+    "skipped": 0
+  },
+  "issue_event_counts": {
+    "queued": 1,
+    "running": 1,
+    "done": 0,
+    "failed": 2,
+    "skipped": 0
+  },
+  "running_events": [
+    {
+      "delivery_id": "run-del-2",
+      "event_type": "issue_comment",
+      "repo": "octo/widget",
+      "issue_key": "octo/widget#2",
+      "received_at": "2026-06-18T00:00:00Z",
+      "started_at": "2026-06-18T00:01:00Z",
+      "attempts": 1,
+      "model": "claude-3-5",
+      "last_tool": "edit",
+      "last_tool_ts": "2026-06-18T00:01:10Z"
+    },
+    {
+      "delivery_id": "run-del-9",
+      "event_type": "issue_comment",
+      "repo": "octo/widget",
+      "issue_key": "octo/widget#9",
+      "received_at": "2026-06-18T00:00:00Z",
+      "started_at": null,
+      "attempts": 1,
+      "model": null,
+      "last_tool": null,
+      "last_tool_ts": null
+    },
+    {
+      "delivery_id": "run-del-5",
+      "event_type": "issue_comment",
+      "repo": "octo/widget",
+      "issue_key": null,
+      "received_at": "2026-06-18T00:00:00Z",
+      "started_at": "2026-06-18T00:01:00Z",
+      "attempts": 1,
+      "model": "claude-3-5",
+      "last_tool": "edit",
+      "last_tool_ts": null
+    }
+  ],
+  "inflight": [
+    "octo/widget#2",
+    "octo/widget#7"
+  ],
+  "issues": [
+    {
+      "key": "octo/widget#1",
+      "repo": "octo/widget",
+      "number": 1,
+      "branch": null,
+      "pr_number": null,
+      "state": "fixing",
+      "classification": "bug",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "latest_event": {
+        "delivery_id": "fail-del-1",
+        "event_type": "issues",
+        "state": "failed",
+        "attempts": 1,
+        "received_at": "2026-06-18T00:00:00Z",
+        "last_error": "triage failed error"
+      }
+    },
+    {
+      "key": "octo/widget#2",
+      "repo": "octo/widget",
+      "number": 2,
+      "branch": "fix-branch",
+      "pr_number": 42,
+      "state": "reproducing",
+      "classification": "bug",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "latest_event": {
+        "delivery_id": "run-del-2",
+        "event_type": "issue_comment",
+        "state": "running",
+        "attempts": 1,
+        "received_at": "2026-06-18T00:00:00Z",
+        "last_error": null
+      }
+    },
+    {
+      "key": "octo/widget#3",
+      "repo": "octo/widget",
+      "number": 3,
+      "branch": null,
+      "pr_number": null,
+      "state": "new",
+      "classification": "bug",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "latest_event": {
+        "delivery_id": "queued-del-3",
+        "event_type": "issues",
+        "state": "queued",
+        "attempts": 1,
+        "received_at": "2026-06-18T00:00:00Z",
+        "last_error": null
+      }
+    },
+    {
+      "key": "octo/widget#4",
+      "repo": "octo/widget",
+      "number": 4,
+      "branch": null,
+      "pr_number": null,
+      "state": "new",
+      "classification": "bug",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "latest_event": null
+    },
+    {
+      "key": "octo/widget#8",
+      "repo": "octo/widget",
+      "number": 8,
+      "branch": null,
+      "pr_number": null,
+      "state": "fixing",
+      "classification": "bug",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "latest_event": {
+        "delivery_id": "fail-del-8",
+        "event_type": "issues",
+        "state": "failed",
+        "attempts": 1,
+        "received_at": "2026-06-18T00:00:00Z",
+        "last_error": null
+      }
+    },
+    {
+      "key": "octo/widget#9",
+      "repo": "octo/widget",
+      "number": 9,
+      "branch": null,
+      "pr_number": null,
+      "state": "reproducing",
+      "classification": "bug",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "latest_event": {
+        "delivery_id": "run-del-9",
+        "event_type": "issue_comment",
+        "state": "running",
+        "attempts": 1,
+        "received_at": "2026-06-18T00:00:00Z",
+        "last_error": null
+      }
+    },
+    {
+      "key": "octo/widget#10",
+      "repo": "octo/widget",
+      "number": 10,
+      "branch": null,
+      "pr_number": null,
+      "state": "done",
+      "classification": "bug",
+      "updated_at": "2026-06-18T00:02:00Z",
+      "latest_event": {
+        "delivery_id": "done-del",
+        "event_type": "issues",
+        "state": "done",
+        "attempts": 1,
+        "received_at": "2026-06-18T00:02:00Z",
+        "last_error": null
+      }
+    }
+  ],
+  "recent_events": [
+    {
+      "delivery_id": "superseded-del",
+      "event_type": "issues",
+      "repo": "octo/widget",
+      "issue_key": "octo/widget#10",
+      "state": "failed",
+      "attempts": 1,
+      "received_at": "2026-06-18T00:00:00Z",
+      "last_error": "old error"
+    },
+    {
+      "delivery_id": "fail-del-6",
+      "event_type": "issues",
+      "repo": "octo/widget",
+      "issue_key": null,
+      "state": "failed",
+      "attempts": 1,
+      "received_at": "2026-06-18T00:00:00Z",
+      "last_error": "orphan failed error"
+    }
+  ]
+}
