@@ -49,6 +49,7 @@
 		"@babel/parser": "catalog:",
 		"@mozilla/readability": "catalog:",
 		"@oh-my-pi/hashline": "catalog:",
+		"@oh-my-pi/omp-home": "catalog:",
 		"@oh-my-pi/omp-stats": "catalog:",
 		"@oh-my-pi/omp-mechanism": "catalog:",
 		"@oh-my-pi/pi-agent-core": "catalog:",
@@ -81,7 +82,8 @@
 		"puppeteer-core": "catalog:",
 		"turndown": "catalog:",
 		"turndown-plugin-gfm": "catalog:",
-		"zod": "catalog:"
+		"zod": "catalog:",
+		"yaml": "2.9.0"
 	},
 	"optionalDependencies": {
 		"@huggingface/transformers": "catalog:",

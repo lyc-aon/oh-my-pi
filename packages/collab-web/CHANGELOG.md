@@ -20,6 +20,9 @@
 ### Removed
 
 - Removed rendering support for the `render_mermaid` tool from the web tool registry
+### Changed
+
+- Restyled the collab shell with the stats dashboard theme tokens and added the persisted system/light/dark theme toggle.
 
 ## [15.13.3] - 2026-06-15
 
