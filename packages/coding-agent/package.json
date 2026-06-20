@@ -88,7 +88,8 @@
 		"turndown": "catalog:",
 		"turndown-plugin-gfm": "catalog:",
 		"zod": "catalog:",
-		"@oh-my-pi/omp-mechanism": "catalog:"
+		"@oh-my-pi/omp-mechanism": "catalog:",
+		"@oh-my-pi/omp-home": "catalog:"
 	},
 	"optionalDependencies": {
 		"@huggingface/transformers": "catalog:",
