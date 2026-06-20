@@ -2574,9 +2574,10 @@ class CodexWebSocketConnection {
 			// the liveness clock — what matters for reuse health is that the upstream
 			// is still talking to us, not that every frame is well-formed.
 			this.#lastInboundAt = Date.now();
-			this.#writeDebugWebSocketFrame(event.data);
+			const data = (event as unknown as MessageEvent<string | Buffer>).data;
+			this.#writeDebugWebSocketFrame(data);
 			try {
-				const text = typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf-8");
+				const text = typeof data === "string" ? data : Buffer.from(data).toString("utf-8");
 				if (!text) return;
 				const parsed = JSON.parse(text) as Record<string, unknown>;
 				if (parsed.type === "error" && typeof parsed.error === "object" && parsed.error) {
@@ -2591,7 +2592,7 @@ class CodexWebSocketConnection {
 				notifyCodexWebSocketInbound(this.#streamObserver, parsed, text);
 				this.#push(parsed);
 			} catch (error) {
-				notifyCodexWebSocketMalformed(this.#streamObserver, event.data, error);
+				notifyCodexWebSocketMalformed(this.#streamObserver, data, error);
 				this.#push(new CodexWebSocketTransportError(`${String(error)}`));
 			}
 		};
