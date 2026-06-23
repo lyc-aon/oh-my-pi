@@ -152,11 +152,15 @@ async function buildBinary(target: BinaryTarget): Promise<void> {
 async function generateBundle(): Promise<void> {
 	if (isDryRun) {
 		console.log("DRY RUN bun run gen:stats");
+		console.log("DRY RUN bun --cwd=packages/mechanism scripts/generate-client-bundle.ts --generate");
+		console.log("DRY RUN bun --cwd=packages/home scripts/generate-client-bundle.ts --generate");
 		console.log("DRY RUN bun run gen:docs");
 		console.log("DRY RUN bun run gen:mupdf");
 		return;
 	}
 	await runCommand(["bun", "run", "gen:stats"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/mechanism", "scripts/generate-client-bundle.ts", "--generate"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/home", "scripts/generate-client-bundle.ts", "--generate"], repoRoot);
 	await runCommand(["bun", "run", "gen:docs"], repoRoot);
 	await runCommand(["bun", "run", "gen:mupdf"], repoRoot);
 }
@@ -165,12 +169,16 @@ async function resetArtifacts(): Promise<void> {
 	if (isDryRun) {
 		console.log("DRY RUN bun run gen:native:reset");
 		console.log("DRY RUN bun run gen:stats:reset");
+		console.log("DRY RUN bun --cwd=packages/mechanism scripts/generate-client-bundle.ts --reset");
+		console.log("DRY RUN bun --cwd=packages/home scripts/generate-client-bundle.ts --reset");
 		console.log("DRY RUN bun run gen:docs:reset");
 		console.log("DRY RUN bun run gen:mupdf:reset");
 		return;
 	}
 	await runCommand(["bun", "run", "gen:native:reset"], repoRoot);
 	await runCommand(["bun", "run", "gen:stats:reset"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/mechanism", "scripts/generate-client-bundle.ts", "--reset"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/home", "scripts/generate-client-bundle.ts", "--reset"], repoRoot);
 	await runCommand(["bun", "run", "gen:docs:reset"], repoRoot);
 	await runCommand(["bun", "run", "gen:mupdf:reset"], repoRoot);
 }

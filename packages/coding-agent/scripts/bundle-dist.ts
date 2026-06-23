@@ -80,6 +80,8 @@ async function main(): Promise<void> {
 	// (scripts/build-binary.ts). Reset afterwards to keep the checked-in
 	// placeholder empty.
 	await runCommand(["bun", "--cwd=../stats", "run", "gen:stats"]);
+	await runCommand(["bun", "--cwd=../mechanism", "scripts/generate-client-bundle.ts", "--generate"]);
+	await runCommand(["bun", "--cwd=../home", "scripts/generate-client-bundle.ts", "--generate"]);
 	try {
 		await runCommand([
 			"bun",
@@ -98,6 +100,8 @@ async function main(): Promise<void> {
 		]);
 	} finally {
 		await runCommand(["bun", "--cwd=../stats", "run", "gen:stats:reset"]);
+		await runCommand(["bun", "--cwd=../mechanism", "scripts/generate-client-bundle.ts", "--reset"]);
+		await runCommand(["bun", "--cwd=../home", "scripts/generate-client-bundle.ts", "--reset"]);
 	}
 	await ensureShebang();
 	const stat = await fs.stat(cliPath);

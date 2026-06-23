@@ -50,6 +50,8 @@ async function main(): Promise<void> {
 	// placeholders (stats client archive, docs index) even on failure.
 	try {
 		await runCommand(["bun", "--cwd=../stats", "run", "gen:stats"]);
+		await runCommand(["bun", "--cwd=../mechanism", "scripts/generate-client-bundle.ts", "--generate"]);
+		await runCommand(["bun", "--cwd=../home", "scripts/generate-client-bundle.ts", "--generate"]);
 		await runCommand(["bun", "run", "gen:docs"]);
 		// `legacy-pi-bundled-registry.ts` static-imports
 		// `@oh-my-pi/pi-coding-agent/export/html` (one of pi-coding-agent's
@@ -128,6 +130,8 @@ async function main(): Promise<void> {
 		}
 	} finally {
 		await runCommand(["bun", "--cwd=../stats", "run", "gen:stats:reset"]);
+		await runCommand(["bun", "--cwd=../mechanism", "scripts/generate-client-bundle.ts", "--reset"]);
+		await runCommand(["bun", "--cwd=../home", "scripts/generate-client-bundle.ts", "--reset"]);
 		await runCommand(["bun", "run", "gen:docs:reset"]);
 	}
 }
