@@ -42,6 +42,8 @@ async function main(): Promise<void> {
 	// placeholders (stats client archive, docs index) even on failure.
 	try {
 		await runCommand(["bun", "--cwd=../stats", "scripts/generate-client-bundle.ts", "--generate"]);
+		await runCommand(["bun", "--cwd=../mechanism", "scripts/generate-client-bundle.ts", "--generate"]);
+		await runCommand(["bun", "--cwd=../home", "scripts/generate-client-bundle.ts", "--generate"]);
 		await runCommand(["bun", "scripts/generate-docs-index.ts", "--generate"]);
 		await runCommand(["bun", "--cwd=../natives", "run", "embed:native"]);
 		await runCommand(["bun", "scripts/embed-mupdf-wasm.ts", "--generate"]);
@@ -101,6 +103,8 @@ async function main(): Promise<void> {
 		}
 	} finally {
 		await runCommand(["bun", "--cwd=../stats", "scripts/generate-client-bundle.ts", "--reset"]);
+		await runCommand(["bun", "--cwd=../mechanism", "scripts/generate-client-bundle.ts", "--reset"]);
+		await runCommand(["bun", "--cwd=../home", "scripts/generate-client-bundle.ts", "--reset"]);
 		await runCommand(["bun", "scripts/generate-docs-index.ts", "--reset"]);
 	}
 }

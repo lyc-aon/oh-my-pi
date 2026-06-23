@@ -151,11 +151,15 @@ async function buildBinary(target: BinaryTarget): Promise<void> {
 async function generateBundle(): Promise<void> {
 	if (isDryRun) {
 		console.log("DRY RUN bun --cwd=packages/stats scripts/generate-client-bundle.ts --generate");
+		console.log("DRY RUN bun --cwd=packages/mechanism scripts/generate-client-bundle.ts --generate");
+		console.log("DRY RUN bun --cwd=packages/home scripts/generate-client-bundle.ts --generate");
 		console.log("DRY RUN bun --cwd=packages/coding-agent scripts/generate-docs-index.ts --generate");
 		console.log("DRY RUN bun --cwd=packages/coding-agent scripts/embed-mupdf-wasm.ts --generate");
 		return;
 	}
 	await runCommand(["bun", "--cwd=packages/stats", "scripts/generate-client-bundle.ts", "--generate"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/mechanism", "scripts/generate-client-bundle.ts", "--generate"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/home", "scripts/generate-client-bundle.ts", "--generate"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/coding-agent", "scripts/generate-docs-index.ts", "--generate"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/coding-agent", "scripts/embed-mupdf-wasm.ts", "--generate"], repoRoot);
 }
@@ -164,12 +168,16 @@ async function resetArtifacts(): Promise<void> {
 	if (isDryRun) {
 		console.log("DRY RUN bun --cwd=packages/natives run embed:native --reset");
 		console.log("DRY RUN bun --cwd=packages/stats scripts/generate-client-bundle.ts --reset");
+		console.log("DRY RUN bun --cwd=packages/mechanism scripts/generate-client-bundle.ts --reset");
+		console.log("DRY RUN bun --cwd=packages/home scripts/generate-client-bundle.ts --reset");
 		console.log("DRY RUN bun --cwd=packages/coding-agent scripts/generate-docs-index.ts --reset");
 		console.log("DRY RUN bun --cwd=packages/coding-agent scripts/embed-mupdf-wasm.ts --reset");
 		return;
 	}
 	await runCommand(["bun", "--cwd=packages/natives", "run", "embed:native", "--reset"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/stats", "scripts/generate-client-bundle.ts", "--reset"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/mechanism", "scripts/generate-client-bundle.ts", "--reset"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/home", "scripts/generate-client-bundle.ts", "--reset"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/coding-agent", "scripts/generate-docs-index.ts", "--reset"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/coding-agent", "scripts/embed-mupdf-wasm.ts", "--reset"], repoRoot);
 }
