@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import {
+	resolveOmpExec,
 	resolveProfileLaunchEnv,
 	resolveToolLaunch,
 	TOOL_DESCRIPTORS,
@@ -85,6 +86,18 @@ describe("home launcher contract", () => {
 			expect(collabSpec).toBeNull();
 		} finally {
 			statSyncSpy.mockRestore();
+		}
+	});
+	it("resolveOmpExec omits the host argv prefix when running as a compiled binary", () => {
+		const savedCompiled = process.env.PI_COMPILED;
+		process.env.PI_COMPILED = "1";
+		try {
+			const exec = resolveOmpExec();
+			expect(exec.cmd).toBe(process.execPath);
+			expect(exec.argvPrefix).toEqual([]);
+		} finally {
+			if (savedCompiled === undefined) delete process.env.PI_COMPILED;
+			else process.env.PI_COMPILED = savedCompiled;
 		}
 	});
 });

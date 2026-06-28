@@ -48,11 +48,46 @@ function getByPath(obj: Record<string, unknown>, segments: readonly string[]): u
 	}
 	return current;
 }
+/**
+ * A setting is REDACTED from the Home config surface when it is a scalar
+ * (boolean/number/string/enum) WITHOUT UI metadata: these config-file-only
+ * values — most importantly credentials like `auth.broker.token` — must never
+ * be read or written through the API. Records/arrays without UI (modelRoles,
+ * cycleOrder, task.agentModelOverrides, …) stay surfaced because focused
+ * editors and the graph/agent services consume them; anything with UI metadata
+ * is always editor-visible.
+ */
+function isRedactedPath(path: SettingPath): boolean {
+	if (getUi(path)) return false;
+	const type = getType(path);
+	return type !== "record" && type !== "array";
+}
+
+/** Write a dotted path into a fresh nested object (no shared refs with `raw`). */
+function setByPath(obj: Record<string, unknown>, segments: readonly string[], value: unknown): void {
+	let current: Record<string, unknown> = obj;
+	for (let i = 0; i < segments.length; i++) {
+		const segment = segments[i]!;
+		if (i === segments.length - 1) {
+			current[segment] = value;
+			continue;
+		}
+		const next = current[segment];
+		if (next === null || next === undefined || typeof next !== "object" || Array.isArray(next)) {
+			const nested: Record<string, unknown> = {};
+			current[segment] = nested;
+			current = nested;
+		} else {
+			current = next as Record<string, unknown>;
+		}
+	}
+}
 
 function buildSchemaMeta(): SchemaMeta[] {
 	const meta: SchemaMeta[] = [];
 	for (const path of Object.keys(SETTINGS_SCHEMA) as SettingPath[]) {
 		const ui: AnyUiMetadata | undefined = getUi(path);
+		if (!ui) continue; // only settings with UI metadata are editor-visible
 		meta.push({
 			path,
 			type: getType(path),
@@ -68,8 +103,9 @@ function buildSchemaMeta(): SchemaMeta[] {
 }
 
 /**
- * Read a profile's config.yml, returning resolved values (file ?? default),
- * the raw parsed object, and full schema metadata for the client editor.
+ * Read a profile's config.yml, returning resolved values (file ?? default), a
+ * raw object reconstructed from VISIBLE file values only (hidden secrets like
+ * `auth.broker.token` are never exposed), and UI-only schema metadata.
  */
 export async function readProfileConfig(profileId: string): Promise<ResolvedConfig> {
 	const profile = await resolveProfile(profileId);
@@ -82,11 +118,17 @@ export async function readProfileConfigFor(
 	const schema = buildSchemaMeta();
 	const raw = await readConfigDoc(profile.configPath);
 	const values: Record<string, unknown> = {};
+	// `raw` is reconstructed from visible (non-redacted) file values only, so a
+	// hidden secret like `auth.broker.token` can never leak to the web client.
+	const sanitizedRaw: Record<string, unknown> = {};
 	for (const path of Object.keys(SETTINGS_SCHEMA) as SettingPath[]) {
-		const fileValue = getByPath(raw, path.split("."));
+		if (isRedactedPath(path)) continue;
+		const segments = path.split(".");
+		const fileValue = getByPath(raw, segments);
 		values[path] = fileValue !== undefined ? fileValue : getDefault(path);
+		if (fileValue !== undefined) setByPath(sanitizedRaw, segments, fileValue);
 	}
-	return { values, raw, schema };
+	return { values, raw: sanitizedRaw, schema };
 }
 
 /** Thrown when a config edit fails validation (caller maps to HTTP 400). */
@@ -139,6 +181,11 @@ export function validateConfigEdit(path: string, value: unknown): void {
 	if (!def) {
 		validateRecordChild(path, value);
 		return;
+	}
+	// Hidden config-file-only scalar (e.g. auth.broker.token) is never editable
+	// through Home — reject both writes and deletes.
+	if (isRedactedPath(path as SettingPath)) {
+		throw new ConfigValidationError(`${path}: not editable via Home config`);
 	}
 	// Delete is always allowed for known paths.
 	if (value === undefined) return;

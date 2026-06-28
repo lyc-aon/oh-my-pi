@@ -44,12 +44,6 @@ export function useResource<T>(
 
 	const controllerRef = useRef<AbortController | null>(null);
 
-	// Track whether we already hold data so a key change refreshes in the
-	// background — keeping the prior view mounted so content animates to the new
-	// data instead of flashing a skeleton.
-	const hasDataRef = useRef(false);
-	hasDataRef.current = data !== null;
-
 	const executeFetch = useCallback(async (isBackground: boolean) => {
 		if (controllerRef.current) {
 			controllerRef.current.abort();
@@ -110,8 +104,9 @@ export function useResource<T>(
 			setLoading(false);
 			executeFetch(true);
 		} else {
-			// No cache: keep any stale data (profile morph) or show a skeleton (first load).
-			executeFetch(hasDataRef.current);
+			// No cache for this key: clear any data left from a previous key so it
+			// cannot be shown or edited under the new key (e.g. switching profile).
+			executeFetch(false);
 		}
 
 		return () => {

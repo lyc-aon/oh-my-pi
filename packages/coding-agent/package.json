@@ -87,6 +87,7 @@
 		"puppeteer-core": "catalog:",
 		"turndown": "catalog:",
 		"turndown-plugin-gfm": "catalog:",
+		"yaml": "catalog:",
 		"zod": "catalog:",
 		"@oh-my-pi/omp-mechanism": "catalog:",
 		"@oh-my-pi/omp-home": "catalog:"

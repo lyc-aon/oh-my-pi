@@ -90,6 +90,7 @@
       "vite-plugin-solid": "^2.11.12",
       "winston": "^3.19.0",
       "winston-daily-rotate-file": "^5.0.0",
+      "yaml": "^2.9.0",
       "zod": "^4",
       "@oh-my-pi/omp-mechanism": "16.0.1",
       "@oh-my-pi/omp-home": "0.1.0"

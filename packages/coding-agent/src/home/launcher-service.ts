@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { LaunchResult, ToolDescriptor, ToolId, ToolStatus } from "@oh-my-pi/omp-home";
-import { $which, workerHostEntry } from "@oh-my-pi/pi-utils";
+import { $which, isCompiledBinary, workerHostEntry } from "@oh-my-pi/pi-utils";
 import type { Subprocess } from "bun";
 import type { ProfileEntry } from "./profiles";
 
@@ -246,6 +246,12 @@ export function resolveProfileLaunchEnv(profile: Pick<ProfileEntry, "agentDir">)
 }
 
 export function resolveOmpExec(): OmpExec {
+	// Mirrors `resolveWorkerSpawnCmd`: a compiled binary's entry point is the
+	// binary itself, so re-launching a subcommand (`stats`, …) is just
+	// `process.execPath <arg>` with no Bun.main/worker-host argv prefix. The
+	// compiled `Bun.main` is a `$bunfs` virtual path a fresh process cannot
+	// resolve, so it must never be forwarded as the launch argv prefix.
+	if (isCompiledBinary()) return { cmd: process.execPath, argvPrefix: [] };
 	const hostEntry = workerHostEntry();
 	if (hostEntry) return { cmd: process.execPath, argvPrefix: [hostEntry] };
 	const argvEntry = process.argv[1];

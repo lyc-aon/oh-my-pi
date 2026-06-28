@@ -8,8 +8,13 @@ const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 
 function readStoredPreference(): ThemePreference {
 	if (typeof localStorage === "undefined") return "system";
-	const stored = localStorage.getItem(STORAGE_KEY);
-	return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+	try {
+		const stored = localStorage.getItem(STORAGE_KEY);
+		return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+	} catch {
+		// Storage blocked/unavailable (private mode, quota, security policy): fall back to the system default.
+		return "system";
+	}
 }
 
 function getSystemTheme(): SystemTheme {
@@ -48,7 +53,13 @@ if (typeof window !== "undefined") {
 
 export function setThemePreference(next: ThemePreference): void {
 	preference = next;
-	if (typeof localStorage !== "undefined") localStorage.setItem(STORAGE_KEY, next);
+	if (typeof localStorage !== "undefined") {
+		try {
+			localStorage.setItem(STORAGE_KEY, next);
+		} catch {
+			// Storage blocked/unavailable: keep the in-memory preference only.
+		}
+	}
 	applyResolvedTheme();
 	emit();
 }

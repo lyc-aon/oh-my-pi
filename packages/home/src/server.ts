@@ -55,6 +55,21 @@ function withSameOriginCors(response: Response, corsHeaders: Record<string, stri
 		headers,
 	});
 }
+/**
+ * Whether a request hostname is a loopback address. The Home server binds to
+ * 127.0.0.1, but an attacker domain that resolves to loopback (DNS rebinding)
+ * still reaches it carrying an attacker-controlled `Host`. Any hostname that is
+ * not `localhost`, `127.0.0.0/8`, or `::1` is refused before API/static content
+ * is served. Bracketed `[::1]` is the WHATWG `URL.hostname` form for IPv6.
+ */
+export function isLoopbackHost(hostname: string): boolean {
+	const host = hostname.toLowerCase();
+	if (host === "localhost") return true;
+	if (host === "[::1]" || host === "::1") return true;
+	const match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+	if (!match) return false;
+	return match.slice(1).every(octet => Number(octet) <= 255);
+}
 
 function sanitizeArchivePath(archivePath: string): string | null {
 	const normalized = archivePath.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -248,6 +263,9 @@ export async function startServer(
 		port,
 		async fetch(req) {
 			const url = new URL(req.url);
+			if (!isLoopbackHost(url.hostname)) {
+				return Response.json({ error: "Requests must target a loopback host" }, { status: 403 });
+			}
 			const requestPath = url.pathname;
 			const corsHeaders = sameOriginCorsHeaders(req, url);
 			if (corsHeaders === null) {
