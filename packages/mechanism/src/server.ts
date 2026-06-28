@@ -41,11 +41,8 @@ const SSE_HEADERS: Record<string, string> = {
 	Connection: "keep-alive",
 	"X-Accel-Buffering": "no",
 };
-const CORS_HEADERS: Record<string, string> = {
-	"Access-Control-Allow-Origin": "*",
-	"Access-Control-Allow-Methods": "GET, OPTIONS",
-	"Access-Control-Allow-Headers": "Content-Type",
-};
+const CORS_METHODS = "GET, OPTIONS";
+const CORS_HEADERS = "Content-Type";
 
 interface RuntimeState {
 	server: Bun.Server<unknown>;
@@ -279,9 +276,33 @@ function handleTailerRecord(normalizer: MechanismNormalizer, record: TailerRecor
 	}
 }
 
-function withCors(response: Response): Response {
+function sameOriginCorsHeaders(req: Request, url: URL): Record<string, string> | null {
+	const origin = req.headers.get("Origin");
+	if (!origin) return {};
+	if (origin !== url.origin) return null;
+	return {
+		"Access-Control-Allow-Origin": origin,
+		"Access-Control-Allow-Methods": CORS_METHODS,
+		"Access-Control-Allow-Headers": CORS_HEADERS,
+		Vary: "Origin",
+	};
+}
+
+function rejectCrossOrigin(req: Request, url: URL): Response | null {
+	const corsHeaders = sameOriginCorsHeaders(req, url);
+	if (corsHeaders === null) {
+		return Response.json({ error: "Cross-origin requests are not allowed" }, { status: 403 });
+	}
+	const fetchSite = req.headers.get("Sec-Fetch-Site");
+	if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+		return Response.json({ error: "Cross-site requests are not allowed" }, { status: 403 });
+	}
+	return null;
+}
+
+function withCors(response: Response, corsHeaders: Record<string, string>): Response {
 	const headers = new Headers(response.headers);
-	for (const [key, value] of Object.entries(CORS_HEADERS)) headers.set(key, value);
+	for (const [key, value] of Object.entries(corsHeaders)) headers.set(key, value);
 	return new Response(response.body, { status: response.status, headers });
 }
 
@@ -337,18 +358,24 @@ function createMechanismHttpServer(
 		port,
 		idleTimeout: 255,
 		async fetch(req) {
-			if (req.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
 			const url = new URL(req.url);
+			const corsHeaders = sameOriginCorsHeaders(req, url);
+			if (corsHeaders === null) {
+				return Response.json({ error: "Cross-origin requests are not allowed" }, { status: 403 });
+			}
+			if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+			const crossOriginRejection = rejectCrossOrigin(req, url);
+			if (crossOriginRejection) return crossOriginRejection;
 			try {
 				if (url.pathname === "/events") {
 					if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
-					return withCors(createEventsResponse(req, normalizer));
+					return withCors(createEventsResponse(req, normalizer), corsHeaders);
 				}
-				if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405, headers: CORS_HEADERS });
-				return withCors(await handleStatic(url.pathname));
+				if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
+				return withCors(await handleStatic(url.pathname), corsHeaders);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "Unknown error";
-				return Response.json({ error: message }, { status: 500, headers: CORS_HEADERS });
+				return Response.json({ error: message }, { status: 500, headers: corsHeaders });
 			}
 		},
 	});

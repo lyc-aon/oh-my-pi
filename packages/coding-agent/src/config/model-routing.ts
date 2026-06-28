@@ -79,6 +79,14 @@ function getModelRoleAlias(value: string): string | undefined {
 	return MODEL_ROLE_IDS.includes(candidate as never) ? candidate : undefined;
 }
 
+function shouldInheritDefaultBeforePriority(role: string): boolean {
+	return role === "smol" || role === "slow" || role === "designer";
+}
+
+function firstPriorityDefault(role: string): string | undefined {
+	return MODEL_PRIO[role as keyof typeof MODEL_PRIO]?.[0];
+}
+
 /**
  * Resolve a single role-aliased pattern against modelRoles, expanding `pi/x`
  * aliases one layer (mirroring expandRoleAlias / resolveConfiguredRolePattern).
@@ -91,8 +99,16 @@ function resolveRolePattern(value: string, modelRoles: Record<string, string>): 
 	const role = getModelRoleAlias(aliasCandidate);
 	if (!role) return normalized;
 
-	const configured = modelRoles[role]?.trim();
-	const resolved = configured ?? MODEL_PRIO[role as keyof typeof MODEL_PRIO]?.[0];
+	let resolved: string | undefined = modelRoles[role]?.trim();
+	if (!resolved && shouldInheritDefaultBeforePriority(role)) {
+		const inheritedDefault = modelRoles[DEFAULT_MODEL_ROLE]?.trim();
+		if (inheritedDefault) {
+			const inheritedRole = getModelRoleAlias(splitThinkingSuffix(inheritedDefault, PREFIX_MODEL_ROLE.length).base);
+			resolved =
+				inheritedRole === role ? firstPriorityDefault(role) : resolveRolePattern(inheritedDefault, modelRoles);
+		}
+	}
+	resolved ??= firstPriorityDefault(role);
 	if (!resolved) return undefined;
 
 	return thinkingLevel ? `${resolved}:${thinkingLevel}` : resolved;

@@ -172,18 +172,23 @@ async function discoverCandidates(): Promise<ProfileEntry[]> {
 
 /**
  * List profiles, auto-seeding/merging the registry on first read. Idempotent:
- * never removes user-added entries; only adds discovered ones and dedupes by
- * realpath. Persists the merged registry.
+ * adds discovered profiles, dedupes by realpath, and prunes entries whose
+ * agentDir/config.yml disappeared so Home cannot recreate stale profiles.
+ * Persists the merged registry.
  */
 export async function listProfiles(): Promise<ProfileEntry[]> {
 	const registry = await readRegistry();
+	const liveRegistry: ProfileEntry[] = [];
+	for (const profile of registry.profiles) {
+		if (await pathExists(path.join(profile.agentDir, "config.yml"))) liveRegistry.push(profile);
+	}
 	const discovered = await discoverCandidates();
-	const merged = dedupeByAgentDir([...registry.profiles, ...discovered]);
-	// Preserve registry order: existing entries first (in their stored order),
+	const merged = dedupeByAgentDir([...liveRegistry, ...discovered]);
+	// Preserve registry order: existing live entries first (in their stored order),
 	// then newly discovered ones.
-	const existingKeys = new Set(registry.profiles.map(p => normalizePathForComparison(p.agentDir)));
+	const existingKeys = new Set(liveRegistry.map(p => normalizePathForComparison(p.agentDir)));
 	const ordered = [
-		...registry.profiles,
+		...liveRegistry,
 		...discovered.filter(d => !existingKeys.has(normalizePathForComparison(d.agentDir))),
 	];
 	// Re-dedupe ordered list (dedupeByAgentDir keeps first occurrence → registry wins).
@@ -201,8 +206,8 @@ export async function listProfiles(): Promise<ProfileEntry[]> {
 }
 
 /**
- * Resolve a profile by id. Throws when the id is unknown (caller maps to 404)
- * or the agentDir no longer exists (caller maps to 410).
+ * Resolve a profile by id. Throws when the id is unknown or was pruned because
+ * its agentDir/config.yml disappeared (caller maps to 404).
  */
 export async function resolveProfile(id: string): Promise<ProfileEntry & { configPath: string; dbPath: string }> {
 	const profiles = await listProfiles();

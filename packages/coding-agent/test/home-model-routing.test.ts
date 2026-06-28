@@ -39,6 +39,21 @@ describe("home model routing", () => {
 		});
 	});
 
+	it("inherits modelRoles.default for unset default-inheriting pi roles", () => {
+		const defaultOnlyRoles = { default: "anthropic/claude-opus-4-8:high" };
+		for (const role of ["smol", "slow", "designer"]) {
+			const result = resolveEffectiveSelector({
+				frontmatterModel: `pi/${role}`,
+				overrides: {},
+				disabledAgents: [],
+				modelRoles: defaultOnlyRoles,
+				name: role,
+			});
+			expect(result.selector).toBe("anthropic/claude-opus-4-8:high");
+			expect(result.source).toBe("role");
+		}
+	});
+
 	it("falls back to the configured default and carries disabled state", () => {
 		const result = resolveEffectiveSelector({
 			overrides: {},
