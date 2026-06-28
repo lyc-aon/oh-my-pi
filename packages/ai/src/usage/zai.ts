@@ -15,6 +15,8 @@ const DEFAULT_ENDPOINT = "https://api.z.ai";
 const QUOTA_PATH = "/api/monitor/usage/quota/limit";
 const MODEL_USAGE_PATH = "/api/monitor/usage/model-usage";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 function normalizeZaiBaseUrl(baseUrl?: string): string {
 	if (!baseUrl?.trim()) return DEFAULT_ENDPOINT;
@@ -27,6 +29,7 @@ function normalizeZaiBaseUrl(baseUrl?: string): string {
 
 interface ZaiUsageLimitItem {
 	type?: string;
+	unit?: number;
 	usage?: number;
 	currentValue?: number;
 	percentage?: number;
@@ -59,6 +62,7 @@ function parseLimitItem(value: unknown): ZaiUsageLimitItem | null {
 		currentValue: toNumber(value.currentValue),
 		percentage: toNumber(value.percentage),
 		remaining: toNumber(value.remaining),
+		unit: toNumber(value.unit),
 		nextResetTime: parseMillis(value.nextResetTime),
 	};
 }
@@ -106,6 +110,24 @@ function buildModelUsageUrl(baseUrl: string, now: Date): string {
 	const startTime = formatDate(start);
 	const endTime = formatDate(now);
 	return `${baseUrl}${MODEL_USAGE_PATH}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
+}
+
+function tokenWindowForUnit(unit: number | undefined): UsageWindow & { scopeId: string } {
+	if (unit === 3) {
+		return { id: "5h", scopeId: "5h", label: "5h", durationMs: FIVE_HOURS_MS };
+	}
+	if (unit === 6) {
+		return { id: "weekly", scopeId: "weekly", label: "Weekly", durationMs: SEVEN_DAYS_MS };
+	}
+	if (unit === 5) {
+		return { id: "monthly", scopeId: "monthly", label: "Monthly", durationMs: THIRTY_DAYS_MS };
+	}
+	return {
+		id: `tokens-u${unit ?? "unknown"}`,
+		scopeId: `tokens-u${unit ?? "unknown"}`,
+		label: "Tokens",
+		durationMs: SEVEN_DAYS_MS,
+	};
 }
 
 async function fetchZaiUsage(params: UsageFetchParams, ctx: UsageFetchContext): Promise<UsageReport | null> {
@@ -157,18 +179,20 @@ async function fetchZaiUsage(params: UsageFetchParams, ctx: UsageFetchContext): 
 				percentage: parsed.percentage,
 				unit: "tokens",
 			});
+			const tokenWindow = tokenWindowForUnit(parsed.unit);
 			const window: UsageWindow = {
-				id: "quota",
-				label: "Quota",
-				durationMs: SEVEN_DAYS_MS,
+				id: tokenWindow.id,
+				label: tokenWindow.label,
+				durationMs: tokenWindow.durationMs,
 				resetsAt: parsed.nextResetTime,
 			};
 			limits.push({
-				id: "zai:tokens",
-				label: "ZAI Token Quota",
+				id: `zai:tokens:${tokenWindow.scopeId}`,
+				label: tokenWindow.label,
 				scope: {
 					provider: params.provider,
-					windowId: window?.id ?? "quota",
+					windowId: tokenWindow.scopeId,
+					tier: "tokens",
 					shared: true,
 				},
 				window,
@@ -178,9 +202,9 @@ async function fetchZaiUsage(params: UsageFetchParams, ctx: UsageFetchContext): 
 		}
 		if (parsed.type === "TIME_LIMIT") {
 			const window: UsageWindow = {
-				id: "quota",
-				label: "Quota",
-				durationMs: SEVEN_DAYS_MS,
+				id: "tools",
+				label: "Tools (Monthly)",
+				durationMs: THIRTY_DAYS_MS,
 				resetsAt: parsed.nextResetTime,
 			};
 			const amount = buildUsageAmount({
@@ -191,11 +215,12 @@ async function fetchZaiUsage(params: UsageFetchParams, ctx: UsageFetchContext): 
 				unit: "requests",
 			});
 			limits.push({
-				id: "zai:requests",
-				label: "ZAI Request Quota",
+				id: "zai:requests:tools",
+				label: "Tools (Monthly)",
 				scope: {
 					provider: params.provider,
-					windowId: "quota",
+					windowId: "tools",
+					tier: "tools",
 					shared: true,
 				},
 				window,
