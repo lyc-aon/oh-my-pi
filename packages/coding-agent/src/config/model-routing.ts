@@ -27,8 +27,8 @@ const DEFAULT_MODEL_ROLE = "default";
 
 /** Inputs to the per-agent effective-selector resolver. */
 export interface EffectiveSelectorInput {
-	/** Agent's frontmatter `model`, if any. */
-	frontmatterModel?: string;
+	/** Agent frontmatter `model`, if any. Multiple candidates are tried in order. */
+	frontmatterModel?: string | readonly string[];
 	/** The full task.agentModelOverrides map for this profile. */
 	overrides: Record<string, string>;
 	/** The full task.disabledAgents list for this profile. */
@@ -130,18 +130,20 @@ export function resolveEffectiveSelector(input: EffectiveSelectorInput): Effecti
 		return { selector: overrideRaw, source: "override", disabled };
 	}
 
-	// 2. agent frontmatter `model`
-	const frontmatterRaw = frontmatterModel?.trim();
-	if (frontmatterRaw) {
+	// 2. agent frontmatter `model` candidates
+	const frontmatterCandidates = typeof frontmatterModel === "string" ? [frontmatterModel] : (frontmatterModel ?? []);
+	for (const candidate of frontmatterCandidates) {
+		const frontmatterRaw = candidate.trim();
+		if (!frontmatterRaw) continue;
 		const { base: aliasCandidate } = splitThinkingSuffix(frontmatterRaw, PREFIX_MODEL_ROLE.length);
 		const alias = getModelRoleAlias(aliasCandidate);
 		if (alias) {
 			// `pi/<role>`: resolve through modelRoles[role], then fall to default.
 			const resolved = resolveRolePattern(frontmatterRaw, modelRoles);
 			if (resolved) return { selector: resolved, source: "role", disabled };
-		} else {
-			return { selector: frontmatterRaw, source: "frontmatter", disabled };
+			continue;
 		}
+		return { selector: frontmatterRaw, source: "frontmatter", disabled };
 	}
 
 	// 3/4. modelRoles.default (and role-aliased default)

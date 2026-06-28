@@ -54,6 +54,20 @@ describe("home model routing", () => {
 		}
 	});
 
+	it("uses the first resolvable model from multi-candidate frontmatter", () => {
+		const result = resolveEffectiveSelector({
+			frontmatterModel: ["pi/plan", "pi/slow"],
+			overrides: {},
+			disabledAgents: [],
+			modelRoles: {},
+			name: "plan",
+		});
+
+		expect(result.selector).toBeDefined();
+		expect(result.selector).not.toBe("pi/plan");
+		expect(result.source).toBe("role");
+	});
+
 	it("falls back to the configured default and carries disabled state", () => {
 		const result = resolveEffectiveSelector({
 			overrides: {},

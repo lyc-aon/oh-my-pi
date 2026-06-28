@@ -16,6 +16,16 @@ describe("mechanism server CORS", () => {
 
 		const foreign = await fetch(url, { headers: { Origin: "https://evil.example" } });
 		expect(foreign.status).toBe(403);
+
+		const rebound = await fetch(url, {
+			headers: {
+				Host: `attacker.example:${server.port}`,
+				Origin: `http://attacker.example:${server.port}`,
+				"Sec-Fetch-Site": "same-origin",
+			},
+		});
+		expect(rebound.status).toBe(403);
+		expect(rebound.headers.get("Access-Control-Allow-Origin")).toBeNull();
 		expect(foreign.headers.get("Access-Control-Allow-Origin")).toBeNull();
 
 		const sameOrigin = await fetch(url, { headers: { Origin: `http://localhost:${server.port}` } });

@@ -138,11 +138,12 @@ export async function listAgents(profileId: string, cwd: string = process.cwd())
 	});
 
 	return agents.map(agent => {
-		const frontmatterModel = agent.model?.find(m => m.trim())?.trim();
+		const frontmatterModels = agent.model?.map(m => m.trim()).filter(Boolean) ?? [];
+		const frontmatterModel = frontmatterModels[0];
 		const override = overrides[agent.name]?.trim() || undefined;
 		const effective = resolveEffectiveSelector({
 			name: agent.name,
-			frontmatterModel,
+			frontmatterModel: frontmatterModels,
 			overrides,
 			disabledAgents,
 			modelRoles,

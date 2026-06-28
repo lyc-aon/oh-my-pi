@@ -44,6 +44,15 @@ const SSE_HEADERS: Record<string, string> = {
 const CORS_METHODS = "GET, OPTIONS";
 const CORS_HEADERS = "Content-Type";
 
+function isLoopbackHost(hostname: string): boolean {
+	const host = hostname.toLowerCase();
+	if (host === "localhost") return true;
+	if (host === "[::1]" || host === "::1") return true;
+	const match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+	if (!match) return false;
+	return match.slice(1).every(octet => Number(octet) <= 255);
+}
+
 interface RuntimeState {
 	server: Bun.Server<unknown>;
 	normalizer: MechanismNormalizer;
@@ -355,10 +364,14 @@ function createMechanismHttpServer(
 	normalizer: MechanismNormalizer,
 ): { server: Bun.Server<unknown>; heartbeat: NodeJS.Timeout } {
 	const server = Bun.serve({
+		hostname: "127.0.0.1",
 		port,
 		idleTimeout: 255,
 		async fetch(req) {
 			const url = new URL(req.url);
+			if (!isLoopbackHost(url.hostname)) {
+				return Response.json({ error: "Requests must target a loopback host" }, { status: 403 });
+			}
 			const corsHeaders = sameOriginCorsHeaders(req, url);
 			if (corsHeaders === null) {
 				return Response.json({ error: "Cross-origin requests are not allowed" }, { status: 403 });

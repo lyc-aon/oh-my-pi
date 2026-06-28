@@ -6,10 +6,19 @@ export type ThemePreference = "system" | "light" | "dark";
 const STORAGE_KEY = "omp-home-theme";
 const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 
-function readStoredPreference(): ThemePreference {
-	if (typeof localStorage === "undefined") return "system";
+function getLocalStorage(): Storage | null {
 	try {
-		const stored = localStorage.getItem(STORAGE_KEY);
+		return globalThis.localStorage ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function readStoredPreference(): ThemePreference {
+	const storage = getLocalStorage();
+	if (!storage) return "system";
+	try {
+		const stored = storage.getItem(STORAGE_KEY);
 		return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
 	} catch {
 		// Storage blocked/unavailable (private mode, quota, security policy): fall back to the system default.
@@ -53,9 +62,10 @@ if (typeof window !== "undefined") {
 
 export function setThemePreference(next: ThemePreference): void {
 	preference = next;
-	if (typeof localStorage !== "undefined") {
+	const storage = getLocalStorage();
+	if (storage) {
 		try {
-			localStorage.setItem(STORAGE_KEY, next);
+			storage.setItem(STORAGE_KEY, next);
 		} catch {
 			// Storage blocked/unavailable: keep the in-memory preference only.
 		}
