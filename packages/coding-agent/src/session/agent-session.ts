@@ -495,9 +495,32 @@ function sanitizeAssistantForReparentedHistory(message: AssistantMessage): Assis
 	return { ...message, content, providerPayload: undefined };
 }
 
+type CorrelatedAgentEvent<E extends AgentEvent = AgentEvent> = E extends {
+	type: "message_start" | "message_update" | "message_end";
+}
+	? E & { streamId?: string }
+	: E;
+
+function correlateAgentEvent(event: AgentEvent, streamId: string | undefined): CorrelatedAgentEvent {
+	if (
+		!streamId ||
+		(event.type !== "message_start" && event.type !== "message_update" && event.type !== "message_end")
+	) {
+		return event;
+	}
+	return { ...event, streamId };
+}
+
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
-	| AgentEvent
+	| CorrelatedAgentEvent
+	| {
+			type: "message_persisted";
+			/** Opaque ID shared by this assistant message's start/update/end frames. */
+			streamId: string;
+			/** Exact SessionManager entry ID, or null when the message was intentionally not persisted. */
+			entryId: string | null;
+	  }
 	| {
 			type: "auto_compaction_start";
 			reason: "threshold" | "overflow" | "idle" | "incomplete";
@@ -1754,6 +1777,7 @@ export class AgentSession {
 	#messageEndPersistenceTail: Promise<void> = Promise.resolve();
 	#pendingMessageEndPersistence = new Map<string, Promise<void>>();
 	#persistedMessageKeys: { anchor: string; keys: Set<string> } | undefined;
+	#activeAssistantStreamId: string | undefined;
 
 	#skills: Skill[];
 	#skillWarnings: SkillWarning[];
@@ -3387,6 +3411,27 @@ export class AgentSession {
 		}
 	};
 
+	/**
+	 * Assign assistant lifecycle correlation synchronously, before event hooks can
+	 * await and reorder wire delivery. Core emits immutable message snapshots, so
+	 * object identity cannot connect start/update/end; this opaque ID is the exact
+	 * live-stream identity used by RPC consumers instead.
+	 */
+	#assistantStreamIdFor(event: AgentEvent): string | undefined {
+		if (
+			(event.type !== "message_start" && event.type !== "message_update" && event.type !== "message_end") ||
+			event.message.role !== "assistant"
+		) {
+			return undefined;
+		}
+		if (event.type === "message_start" || !this.#activeAssistantStreamId) {
+			this.#activeAssistantStreamId = crypto.randomUUID();
+		}
+		const streamId = this.#activeAssistantStreamId;
+		if (event.type === "message_end") this.#activeAssistantStreamId = undefined;
+		return streamId;
+	}
+
 	#createMessageEndPersistenceSlot(message: AgentMessage): MessageEndPersistenceSlot | undefined {
 		const key = sessionMessagePersistenceKey(message);
 		if (!key) return undefined;
@@ -3480,19 +3525,23 @@ export class AgentSession {
 	 * persistence-key cache for the common missing-key case, and only walks the
 	 * branch to verify content when a key hit could be a rare collision.
 	 */
-	#sessionMessageAlreadyPersisted(message: AgentMessage): boolean {
+	#persistedSessionMessageEntry(message: AgentMessage): Extract<SessionEntry, { type: "message" }> | undefined {
 		const key = sessionMessagePersistenceKey(message);
-		if (key === undefined) return false;
+		if (key === undefined) return undefined;
 		const keys = this.#ensurePersistedMessageKeys();
-		if (!keys.has(key)) return false;
+		if (!keys.has(key)) return undefined;
 		const branch = this.sessionManager.getBranch();
 		for (let index = branch.length - 1; index >= 0; index--) {
 			const entry = branch[index];
 			if (entry.type !== "message") continue;
 			if (sessionMessagePersistenceKey(entry.message) !== key) continue;
-			if (sameMessageContent(entry.message, message)) return true;
+			if (sameMessageContent(entry.message, message)) return entry;
 		}
-		return false;
+		return undefined;
+	}
+
+	#sessionMessageAlreadyPersisted(message: AgentMessage): boolean {
+		return this.#persistedSessionMessageEntry(message) !== undefined;
 	}
 
 	#appendSessionMessage(
@@ -3515,7 +3564,7 @@ export class AgentSession {
 		return entryId;
 	}
 
-	#persistSessionMessageIfMissing(message: AgentMessage): void {
+	#persistSessionMessageIfMissing(message: AgentMessage): string | undefined {
 		if (
 			message.role !== "user" &&
 			message.role !== "developer" &&
@@ -3523,13 +3572,14 @@ export class AgentSession {
 			message.role !== "toolResult" &&
 			message.role !== "fileMention"
 		) {
-			return;
+			return undefined;
 		}
-		if (this.#sessionMessageAlreadyPersisted(message)) return;
+		const persisted = this.#persistedSessionMessageEntry(message);
+		if (persisted) return persisted.id;
 		if (message.role === "assistant") {
 			const assistantMsg = message as AssistantMessage;
-			if (this.#isClassifierRefusal(assistantMsg)) return;
-			if (isEmptyErrorTurn(assistantMsg)) return;
+			if (this.#isClassifierRefusal(assistantMsg)) return undefined;
+			if (isEmptyErrorTurn(assistantMsg)) return undefined;
 			if (assistantMsg.stopReason !== "aborted" && assistantMsg.stopReason !== "error" && assistantMsg.usage) {
 				assistantMsg.contextSnapshot = {
 					promptTokens: calculatePromptTokens(assistantMsg.usage),
@@ -3542,8 +3592,9 @@ export class AgentSession {
 			message.toolName === "rewind" &&
 			this.#rewoundToolResultIds.delete(message.toolCallId);
 		if (!skipPersistedRewindResult) {
-			this.#appendSessionMessage(message);
+			return this.#appendSessionMessage(message);
 		}
+		return undefined;
 	}
 
 	/**
@@ -3618,6 +3669,10 @@ export class AgentSession {
 	}
 
 	#processAgentEvent = async (event: AgentEvent): Promise<void> => {
+		// This must run before the first await in the handler. Agent-core invokes
+		// listeners fire-and-forget, so later lifecycle handlers can otherwise race
+		// ahead while extension hooks are pending.
+		const assistantStreamId = this.#assistantStreamIdFor(event);
 		// Step the mid-run todo counter synchronously, BEFORE any await in this
 		// handler. The agent loop's next-turn `getAsideMessages` poll can run
 		// before queued microtasks drain, so `#takeMidRunTodoNudge` MUST see the
@@ -3682,13 +3737,17 @@ export class AgentSession {
 		// values. The original event.message stays obfuscated so the persistence path below
 		// writes `#HASH#` tokens to the session file; convertToLlm re-obfuscates outbound
 		// traffic on the next turn. Walks text, thinking, and toolCall arguments/intent.
-		let displayEvent: AgentEvent = event;
+		let displayEvent: AgentSessionEvent = correlateAgentEvent(event, assistantStreamId);
 		const obfuscator = this.#obfuscator;
 		if (obfuscator && event.type === "message_end" && event.message.role === "assistant") {
 			const message = event.message;
 			const deobfuscatedContent = deobfuscateAssistantContent(obfuscator, message.content);
 			if (deobfuscatedContent !== message.content) {
-				displayEvent = { ...event, message: { ...message, content: deobfuscatedContent } };
+				displayEvent = {
+					...event,
+					streamId: assistantStreamId,
+					message: { ...message, content: deobfuscatedContent },
+				};
 			}
 		}
 
@@ -3797,7 +3856,6 @@ export class AgentSession {
 			}
 		}
 
-
 		if (
 			event.type === "message_update" &&
 			(event.assistantMessageEvent.type === "toolcall_start" ||
@@ -3816,6 +3874,7 @@ export class AgentSession {
 
 		// Handle session persistence
 		if (event.type === "message_end") {
+			let persistedEntryId: string | undefined;
 			const persistMessageEnd = () => {
 				// Check if this is a hook/custom message
 				if (event.message.role === "hookMessage" || event.message.role === "custom") {
@@ -3831,13 +3890,20 @@ export class AgentSession {
 						this.#markTtsrInjected(this.#extractTtsrRuleNames(event.message.details));
 					}
 				} else {
-					this.#persistSessionMessageIfMissing(event.message);
+					persistedEntryId = this.#persistSessionMessageIfMissing(event.message);
 				}
 			};
 			if (messageEndPersistence) {
 				await messageEndPersistence.persist(persistMessageEnd);
 			} else {
 				persistMessageEnd();
+			}
+			if (event.message.role === "assistant" && assistantStreamId) {
+				// SessionManager append notifications (and therefore RPC session_entry)
+				// fire synchronously before appendMessage returns. This authoritative
+				// mapping consequently follows the durable entry on the wire and never
+				// needs content/timestamp heuristics.
+				this.#emit({ type: "message_persisted", streamId: assistantStreamId, entryId: persistedEntryId ?? null });
 			}
 			if (interruptedThinkingMessage) {
 				this.sessionManager.appendCustomMessageEntry(
