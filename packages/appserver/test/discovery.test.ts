@@ -49,6 +49,27 @@ function sessionTranscript(id: string, cwd: string, title: string): string {
 }
 
 describe("current OMP JSONL projection", () => {
+	test("projects filesystem-root sessions with a valid non-empty project name", async () => {
+		const discovery = new FileSessionDiscovery(
+			"/root",
+			fakeFs({ "/root/session.jsonl": sessionTranscript("session-root", "/", "Root session") }, ["/root"]),
+			host,
+		);
+		const [session] = await discovery.list();
+		if (!session) throw new Error("root session not discovered");
+		const projection = new SessionProjection(host, session, "epoch-test");
+		const decoded = decodeServerFrame({
+			v: "omp-app/1",
+			type: "sessions",
+			hostId: host,
+			cursor: { epoch: "epoch-test", seq: 0 },
+			sessions: [projection.value.ref],
+		});
+
+		expect(decoded.type).toBe("sessions");
+		if (decoded.type === "sessions") expect(decoded.sessions[0]?.project.name).toBe("/");
+	});
+
 	test("bounds multibyte plain-string prompt projections without splitting UTF-8", () => {
 		const projected = projectMessageText("🙂".repeat(4_000), 8 * 1024);
 		expect(new TextEncoder().encode(projected).byteLength).toBeLessThanOrEqual(8 * 1024);

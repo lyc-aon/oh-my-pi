@@ -231,7 +231,7 @@ function toolResultImages(content: unknown, details: unknown, allowManagedMarker
 
 export function projectNameFromCwd(cwd: string): string {
 	const pieces = cwd.replace(/[\\/]+$/u, "").split(/[\\/]/u);
-	return cleanText(pieces.at(-1) ?? "", 256, true);
+	return cleanText(pieces.at(-1) ?? "", 256, true) || cleanText(cwd, 256, true) || "Root";
 }
 
 type ProjectionMode = "batch" | "live";
