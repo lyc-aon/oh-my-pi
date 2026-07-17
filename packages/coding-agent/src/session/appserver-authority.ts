@@ -1,4 +1,4 @@
-import { lstat, opendir, realpath } from "node:fs/promises";
+import { lstat, opendir, realpath, readFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import * as path from "node:path";
@@ -101,6 +101,24 @@ export function createAppserverRuntime(options: AppserverAuthorityOptions = {}):
 		options.projectCatalog === false ? undefined : (options.projectCatalog ?? defaultSameFamilyProjectCatalog());
 	const projectTokens = new Map<string, string>();
 	const registeredProjects = new Map<ProjectId, string>();
+	const catalogPath = path.join(getAgentDir(), "appserver", "projects.json");
+	const catalogLoaded = (async () => {
+		try {
+			const parsed = JSON.parse(await readFile(catalogPath, "utf8")) as unknown;
+			if (!Array.isArray(parsed)) return;
+			for (const item of parsed.slice(0, 256)) {
+				if (!Array.isArray(item) || typeof item[0] !== "string" || typeof item[1] !== "string") continue;
+				const canonical = await realpath(item[1]).catch(() => undefined);
+				if (canonical) registeredProjects.set(item[0] as ProjectId, canonical);
+			}
+		} catch {}
+	})();
+	const persistCatalog = async (): Promise<void> => {
+		await mkdir(path.dirname(catalogPath), { recursive: true, mode: 0o700 });
+		const temporary = `${catalogPath}.${randomUUID()}.tmp`;
+		await writeFile(temporary, JSON.stringify([...registeredProjects].slice(0, 256)), { mode: 0o600 });
+		await rename(temporary, catalogPath);
+	};
 	const tokenFor = (root: string): string => {
 		for (const [token, mapped] of projectTokens) if (mapped === root) return token;
 		const token = randomUUID();
@@ -131,6 +149,7 @@ export function createAppserverRuntime(options: AppserverAuthorityOptions = {}):
 		} finally {
 			await directory.close();
 		}
+		await persistCatalog();
 		const after = await lstat(root);
 		if (after.dev !== before.dev || after.ino !== before.ino) throw Object.assign(new Error("directory raced"), { code: "FORBIDDEN" });
 		return {
@@ -147,6 +166,7 @@ export function createAppserverRuntime(options: AppserverAuthorityOptions = {}):
 		const canonical = await realpath(root);
 		const project = stableProjectId(canonical);
 		registeredProjects.set(project, canonical);
+		await persistCatalog();
 		return { project: { projectId: project, name: path.basename(canonical) || canonical } };
 	};
 	const projectClone = async (args: Record<string, unknown>, context: { abortSignal: AbortSignal }) => {
@@ -162,15 +182,23 @@ export function createAppserverRuntime(options: AppserverAuthorityOptions = {}):
 		try { await lstat(target); throw Object.assign(new Error("destination exists"), { code: "CONFLICT" }); } catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
-		const proc = Bun.spawn(["git", "clone", String(args.repositoryUrl), target], { cwd: destination, stdout: "pipe", stderr: "pipe" });
+		const proc = Bun.spawn(["git", "clone", String(args.repositoryUrl), target], { cwd: destination, stdout: "ignore", stderr: "ignore" });
+		let timedOut = false;
 		const abort = () => proc.kill("SIGTERM");
 		context.abortSignal.addEventListener("abort", abort, { once: true });
+		const timer = setTimeout(() => {
+			timedOut = true;
+			abort();
+		}, 120_000);
 		const code = await proc.exited;
+		clearTimeout(timer);
 		context.abortSignal.removeEventListener("abort", abort);
-		if (code !== 0 || context.abortSignal.aborted) throw Object.assign(new Error("clone failed"), { code: context.abortSignal.aborted ? "ABORTED" : "OPERATION_FAILED" });
+		if (code !== 0 || context.abortSignal.aborted || timedOut)
+			throw Object.assign(new Error("clone failed"), { code: context.abortSignal.aborted ? "ABORTED" : timedOut ? "OPERATION_FAILED" : "OPERATION_FAILED" });
 		const canonical = await realpath(target);
 		const project = stableProjectId(canonical);
 		registeredProjects.set(project, canonical);
+		await persistCatalog();
 		return { project: { projectId: project, name } };
 	};
 	const refresh = async (): Promise<SessionRecord[]> => {
@@ -265,6 +293,7 @@ export function createAppserverRuntime(options: AppserverAuthorityOptions = {}):
 		return projectRootForSessionSync(session);
 	};
 	const projectRootForProject = async (project: ProjectId): Promise<string> => {
+		await catalogLoaded;
 		const registered = registeredProjects.get(project);
 		if (registered) return registered;
 		return resolveProjectRootFromRecords(project, await discovery.list(), projectCatalog);
