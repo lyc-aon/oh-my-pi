@@ -470,6 +470,8 @@ export function appserverSupportedFeatures(
 		implementedFeatures.add("terminal.io");
 	if (authority?.filesList) implementedFeatures.add("files.list");
 	if (authority?.filesDiff) implementedFeatures.add("files.diff");
+	if (authority?.projectBrowse && authority.projectRegister && authority.projectClone)
+		implementedFeatures.add("projects.manage");
 	if (authority?.previewLaunch && authority.previewState && authority.previewNavigate && authority.previewCapture)
 		implementedFeatures.add("preview.control");
 	return [...(options.supportedFeatures ?? implementedFeatures)].filter(
@@ -636,7 +638,9 @@ export class LocalAppserver implements AppserverHandle {
 	hasDesktopCatalogCommandHandler(command: string): boolean {
 		if (command === "usage.read") return this.#usageAuthority !== undefined;
 		if (this.#operations?.hasCommand(command)) return true;
-		return this.#handlers.has(command) || DIRECT_SESSION_RPC_COMMANDS.has(command) || command === SESSION_CANCEL_COMMAND;
+		return (
+			this.#handlers.has(command) || DIRECT_SESSION_RPC_COMMANDS.has(command) || command === SESSION_CANCEL_COMMAND
+		);
 	}
 	async start(): Promise<void> {
 		if (this.#started) return;

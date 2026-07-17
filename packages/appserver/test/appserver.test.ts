@@ -185,6 +185,36 @@ describe("appserver lifecycle", () => {
 			appserverSupportedFeatures({ supportedFeatures: ["transcript.images"], transcriptImageRoot: undefined }),
 		).not.toContain("transcript.images");
 	});
+	test("advertises project management only with the complete authority", () => {
+		expect(
+			appserverSupportedFeatures({
+				operationsAuthority: {
+					projectBrowse: async () => ({
+						directory: { token: "token", name: "Home" },
+						entries: [],
+						truncated: false,
+					}),
+					projectRegister: async () => ({
+						project: { projectId: "project-test", name: "Project" },
+					}),
+					projectClone: async () => ({
+						project: { projectId: "project-test", name: "Project" },
+					}),
+				},
+			}),
+		).toContain("projects.manage");
+		expect(
+			appserverSupportedFeatures({
+				operationsAuthority: {
+					projectBrowse: async () => ({
+						directory: { token: "token", name: "Home" },
+						entries: [],
+						truncated: false,
+					}),
+				},
+			}),
+		).not.toContain("projects.manage");
+	});
 	test("advertises usage reads only when a concrete read authority exists", () => {
 		expect(appserverSupportedCapabilities({})).not.toContain("usage.read");
 		expect(
