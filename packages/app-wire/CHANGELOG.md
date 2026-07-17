@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+## [0.5.8] - 2026-07-17
+
+### Added
+
+- Add host-scoped project browse, register, and clone command contracts.
 
 ## [0.5.7] - 2026-07-16
 

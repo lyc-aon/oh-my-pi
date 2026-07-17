@@ -28,6 +28,9 @@ export interface OperationContext {
 
 /** Optional methods are deliberate: capability advertisement is based on the actual authority object. */
 export interface DesktopOperationsAuthority {
+	projectBrowse?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
+	projectRegister?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
+	projectClone?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
 	filesRead?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
 	filesList?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
 	filesDiff?(args: CommandResult, context: OperationContext): Promise<CommandResult>;
@@ -73,6 +76,9 @@ const CAPABILITY_BY_COMMAND: Record<string, DeviceCapability> = Object.fromEntri
 	Object.entries(COMMAND_DESCRIPTORS).map(([name, descriptor]) => [name, descriptor.capability]),
 ) as Record<string, DeviceCapability>;
 const OPERATION_METHOD_BY_COMMAND: Readonly<Record<string, keyof DesktopOperationsAuthority>> = {
+	"project.browse": "projectBrowse",
+	"project.register": "projectRegister",
+	"project.clone": "projectClone",
 	"files.read": "filesRead",
 	"files.list": "filesList",
 	"files.diff": "filesDiff",

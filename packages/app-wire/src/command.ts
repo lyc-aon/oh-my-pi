@@ -70,6 +70,30 @@ export const COMMAND_DESCRIPTORS: Readonly<Record<string, CommandDescriptor>> = 
 		revisionOwner: "none",
 		confirmation: "none",
 	},
+	"project.browse": {
+		capability: "projects.manage",
+		scope: "host",
+		revision: "none",
+		revisionOwner: "none",
+		confirmation: "none",
+		desktopCatalog: true,
+	},
+	"project.register": {
+		capability: "projects.manage",
+		scope: "host",
+		revision: "none",
+		revisionOwner: "none",
+		confirmation: "none",
+		desktopCatalog: true,
+	},
+	"project.clone": {
+		capability: "projects.manage",
+		scope: "host",
+		revision: "none",
+		revisionOwner: "none",
+		confirmation: "none",
+		desktopCatalog: true,
+	},
 	"session.list": {
 		capability: "sessions.read",
 		scope: "host",
@@ -636,6 +660,39 @@ function url(value: unknown, path: string): string {
 function metadata(value: unknown, path: string): Record<string, unknown> {
 	return boundedMetadata(value, path, isSecretLikeKey);
 }
+function projectToken(value: unknown, field: string): string {
+	return controlFree(value, field, 256);
+}
+function decodeProjectBrowseResult(value: unknown): CommandResult {
+	const x = result(value);
+	if (Object.keys(x).some(key => !["directory", "entries", "truncated"].includes(key)))
+		fail("INVALID_FRAME", "invalid project browse result", "result");
+	const directory = boundedMap(x.directory, "result.directory");
+	if (Object.keys(directory).some(key => !["token", "name", "parentToken"].includes(key)))
+		fail("INVALID_FRAME", "invalid project directory", "result.directory");
+	projectToken(directory.token, "result.directory.token");
+	controlFree(directory.name, "result.directory.name", 512);
+	if (directory.parentToken !== undefined) projectToken(directory.parentToken, "result.directory.parentToken");
+	const entries = boundedArray(x.entries, "result.entries").map((entry, i) => {
+		const item = boundedMap(entry, `result.entries[${i}]`);
+		if (Object.keys(item).some(key => !["token", "name"].includes(key)))
+			fail("INVALID_FRAME", "invalid project entry", `result.entries[${i}]`);
+		projectToken(item.token, `result.entries[${i}].token`);
+		controlFree(item.name, `result.entries[${i}].name`, 512);
+		return item;
+	});
+	if (typeof x.truncated !== "boolean") fail("INVALID_FRAME", "truncated must be boolean", "result.truncated");
+	return { directory, entries, truncated: x.truncated };
+}
+function decodeProjectResult(value: unknown): CommandResult {
+	const x = result(value);
+	const project = boundedMap(x.project, "result.project");
+	if (Object.keys(x).length !== 1 || Object.keys(project).some(key => !["projectId", "name"].includes(key)))
+		fail("INVALID_FRAME", "invalid project result", "result");
+	projectId(project.projectId, "result.project.projectId");
+	controlFree(project.name, "result.project.name", 512);
+	return { project };
+}
 function decodeSessions(value: unknown): CommandResult {
 	const result: SessionListResult = decodeSessionListResult(value);
 	return result as unknown as CommandResult;
@@ -852,6 +909,22 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 	"session.prompt": value => decodeSessionPromptArguments(value) as unknown as CommandArguments,
 	"session.image.begin": value => decodeImageBegin(value) as unknown as CommandArguments,
 	"session.image.chunk": value => decodeImageChunk(value) as unknown as CommandArguments,
+	"project.browse": value => {
+		const x = strictArgs(value, ["token"]);
+		if (x.token !== undefined) projectToken(x.token, "args.token");
+		return x;
+	},
+	"project.register": value => {
+		const x = strictArgs(value, ["token"]);
+		projectToken(x.token, "args.token");
+		return x;
+	},
+	"project.clone": value => {
+		const x = strictArgs(value, ["repositoryUrl", "destinationToken"]);
+		url(x.repositoryUrl, "args.repositoryUrl");
+		projectToken(x.destinationToken, "args.destinationToken");
+		return x;
+	},
 	"session.image.discard": value => decodeImageDiscard(value) as unknown as CommandArguments,
 	"session.image.read": value => decodeImageRead(value) as unknown as CommandArguments,
 	"session.state.get": noArgs,
@@ -1034,6 +1107,9 @@ export const COMMAND_ARGUMENT_DECODERS: Readonly<Record<string, (value: unknown)
 };
 export const COMMAND_RESULT_DECODERS: Readonly<Record<string, (value: unknown) => CommandResult>> = {
 	"host.list": decodeSessions,
+	"project.browse": decodeProjectBrowseResult,
+	"project.register": decodeProjectResult,
+	"project.clone": decodeProjectResult,
 	"session.list": decodeSessions,
 	"session.create": decodeCreate,
 	"session.attach": decodeAttach,

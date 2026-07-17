@@ -734,6 +734,9 @@ describe("app-wire authority", () => {
 			"review.apply": "authority",
 			"config.write": "authority",
 			"settings.write": "authority",
+			"project.browse": "none",
+			"project.register": "none",
+			"project.clone": "none",
 			"host.list": "none",
 			"session.list": "none",
 			"session.create": "none",
@@ -767,6 +770,9 @@ describe("app-wire authority", () => {
 			"session.fast.set",
 			"session.cancel",
 			"usage.read",
+			"project.browse",
+			"project.register",
+			"project.clone",
 		];
 		expect([...DESKTOP_CATALOG_COMMANDS].sort()).toEqual(expected.sort());
 		for (const command of DESKTOP_CATALOG_COMMANDS) expect(COMMAND_DESCRIPTORS[command].desktopCatalog).toBe(true);

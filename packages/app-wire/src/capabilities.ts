@@ -5,6 +5,7 @@ export const DEVICE_CAPABILITIES = [
 	"sessions.prompt",
 	"sessions.control",
 	"sessions.manage",
+	"projects.manage",
 	"bash.run",
 	"term.open",
 	"term.input",
@@ -45,6 +46,7 @@ export const PROTOCOL_FEATURES = [
 	"catalog.metadata",
 	"settings.metadata",
 	"preview.control",
+	"projects.manage",
 ] as const;
 export type ProtocolFeature = (typeof PROTOCOL_FEATURES)[number];
 export const REMOTE_DEFAULT_CAPABILITIES = [
