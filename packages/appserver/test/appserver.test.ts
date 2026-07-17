@@ -2,13 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	DESKTOP_CATALOG_COMMANDS,
-	type DurableEntry,
-	hostId,
-	projectId,
-	sessionId,
-} from "@oh-my-pi/app-wire";
+import { DESKTOP_CATALOG_COMMANDS, type DurableEntry, hostId, projectId, sessionId } from "@oh-my-pi/app-wire";
 import { completeAttachOutput, prepareAttachOutput } from "../src/attach-output.ts";
 import { IdempotencyStore } from "../src/idempotency.ts";
 import { SessionProjection } from "../src/projection.ts";
@@ -207,15 +201,16 @@ describe("appserver lifecycle", () => {
 	test("every desktop catalog command has a live appserver handler", () => {
 		const appserver = createAppserver({
 			operationsAuthority: {
+				projectBrowse: async () => ({ directory: { token: "token", name: "Home" }, entries: [], truncated: false }),
+				projectRegister: async () => ({ project: { projectId: "project-test", name: "Project" } }),
+				projectClone: async () => ({ project: { projectId: "project-test", name: "Project" } }),
 				brokerStatus: async () => ({ state: "local", generation: 0 }),
 			},
 			usageAuthority: {
 				read: async () => ({ generatedAt: 0, reports: [], accountsWithoutUsage: [], capacity: {} }),
 			},
 		});
-		const unhandled = DESKTOP_CATALOG_COMMANDS.filter(
-			command => !appserver.hasDesktopCatalogCommandHandler(command),
-		);
+		const unhandled = DESKTOP_CATALOG_COMMANDS.filter(command => !appserver.hasDesktopCatalogCommandHandler(command));
 		expect(unhandled).toEqual([]);
 	});
 	test("indexes three sessions, starts one child each, and removes socket", async () => {
