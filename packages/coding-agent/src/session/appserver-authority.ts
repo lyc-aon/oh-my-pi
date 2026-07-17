@@ -1,8 +1,6 @@
-import { lstat, opendir, realpath, readFile, mkdir, writeFile, rename } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import * as path from "node:path";
-import { hostId, type ProjectId, type SessionId, sessionId } from "@oh-my-pi/app-wire";
+import { hostId, type ProjectId, type SessionId, sessionId, type UsageReadResult } from "@oh-my-pi/app-wire";
 import type { LockCheckHook, SessionAuthority, SessionAuthoritySession, SessionRecord } from "@oh-my-pi/appserver";
 import {
 	type DesktopOperationsAuthority,
@@ -17,6 +15,7 @@ import type { ModelRegistry } from "../config/model-registry";
 import type { Settings } from "../config/settings";
 import type { AgentRegistry } from "../registry/agent-registry";
 import { createAppserverBrokerStatus } from "./appserver-broker";
+import { AppserverProjectAuthority, type ProjectCloneRunner } from "./appserver-project-authority";
 import {
 	defaultSameFamilyProjectCatalog,
 	type ProjectRootCatalog,
@@ -52,6 +51,9 @@ export interface AppserverRuntimeAuthorities {
 export interface AppserverAuthorityOptions {
 	sessionsDir?: string;
 	lifecycleMetadataPath?: string;
+	projectCatalogMetadataPath?: string;
+	projectHomeDirectory?: string;
+	projectCloneRunner?: ProjectCloneRunner;
 	/** Override or disable the read-only same-family project catalog. */
 	projectCatalog?: ProjectRootCatalog | false;
 	settings?: Settings;
@@ -99,108 +101,11 @@ export function createAppserverRuntime(options: AppserverAuthorityOptions = {}):
 	const baseDiscovery = new FileSessionDiscovery(sessionsDir, undefined, authorityHost);
 	const projectCatalog =
 		options.projectCatalog === false ? undefined : (options.projectCatalog ?? defaultSameFamilyProjectCatalog());
-	const projectTokens = new Map<string, string>();
-	const registeredProjects = new Map<ProjectId, string>();
-	const catalogPath = path.join(getAgentDir(), "appserver", "projects.json");
-	const catalogLoaded = (async () => {
-		try {
-			const parsed = JSON.parse(await readFile(catalogPath, "utf8")) as unknown;
-			if (!Array.isArray(parsed)) return;
-			for (const item of parsed.slice(0, 256)) {
-				if (!Array.isArray(item) || typeof item[0] !== "string" || typeof item[1] !== "string") continue;
-				const canonical = await realpath(item[1]).catch(() => undefined);
-				if (canonical) registeredProjects.set(item[0] as ProjectId, canonical);
-			}
-		} catch {}
-	})();
-	const persistCatalog = async (): Promise<void> => {
-		await mkdir(path.dirname(catalogPath), { recursive: true, mode: 0o700 });
-		const temporary = `${catalogPath}.${randomUUID()}.tmp`;
-		await writeFile(temporary, JSON.stringify([...registeredProjects].slice(0, 256)), { mode: 0o600 });
-		await rename(temporary, catalogPath);
-	};
-	const tokenFor = (root: string): string => {
-		for (const [token, mapped] of projectTokens) if (mapped === root) return token;
-		const token = randomUUID();
-		projectTokens.set(token, root);
-		return token;
-	};
-	const projectBrowse = async (args: Record<string, unknown>) => {
-		const root = args.token === undefined ? path.resolve(process.env.HOME ?? process.cwd()) : projectTokens.get(String(args.token));
-		if (!root) throw Object.assign(new Error("unknown token"), { code: "NOT_FOUND" });
-		const before = await lstat(root);
-		if (before.isSymbolicLink() || !before.isDirectory()) throw Object.assign(new Error("unsafe directory"), { code: "FORBIDDEN" });
-		const directory = await opendir(root);
-		const entries: Array<{ token: string; name: string }> = [];
-		let truncated = false;
-		try {
-			while (entries.length < 256) {
-				const entry = await directory.read();
-				if (!entry) break;
-				if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-				const child = path.join(root, entry.name);
-				try {
-					const info = await lstat(child);
-					if (info.isSymbolicLink() || !info.isDirectory()) continue;
-					entries.push({ token: tokenFor(await realpath(child)), name: entry.name });
-				} catch {}
-			}
-			if (entries.length === 256) truncated = true;
-		} finally {
-			await directory.close();
-		}
-		await persistCatalog();
-		const after = await lstat(root);
-		if (after.dev !== before.dev || after.ino !== before.ino) throw Object.assign(new Error("directory raced"), { code: "FORBIDDEN" });
-		return {
-			directory: { token: tokenFor(root), name: path.basename(root) || root, ...(root !== path.dirname(root) ? { parentToken: tokenFor(path.dirname(root)) } : {}) },
-			entries: entries.sort((a, b) => a.name.localeCompare(b.name)),
-			truncated,
-		};
-	};
-	const projectRegister = async (args: Record<string, unknown>) => {
-		const root = projectTokens.get(String(args.token));
-		if (!root) throw Object.assign(new Error("unknown token"), { code: "NOT_FOUND" });
-		const info = await lstat(root);
-		if (info.isSymbolicLink() || !info.isDirectory()) throw Object.assign(new Error("unsafe directory"), { code: "FORBIDDEN" });
-		const canonical = await realpath(root);
-		const project = stableProjectId(canonical);
-		registeredProjects.set(project, canonical);
-		await persistCatalog();
-		return { project: { projectId: project, name: path.basename(canonical) || canonical } };
-	};
-	const projectClone = async (args: Record<string, unknown>, context: { abortSignal: AbortSignal }) => {
-		const destination = projectTokens.get(String(args.destinationToken));
-		if (!destination) throw Object.assign(new Error("unknown token"), { code: "NOT_FOUND" });
-		const parsed = new URL(String(args.repositoryUrl));
-		const parts = parsed.pathname.split("/").filter(Boolean);
-		if (parsed.protocol !== "https:" || parsed.hostname !== "github.com" || parsed.username || parsed.password || parsed.search || parsed.hash || parts.length !== 2)
-			throw Object.assign(new Error("invalid repository URL"), { code: "FORBIDDEN" });
-		const name = parts[1]!.replace(/\.git$/u, "");
-		if (!name || !/^[A-Za-z0-9._-]+$/u.test(name)) throw Object.assign(new Error("invalid repository URL"), { code: "FORBIDDEN" });
-		const target = path.join(destination, name);
-		try { await lstat(target); throw Object.assign(new Error("destination exists"), { code: "CONFLICT" }); } catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
-		const proc = Bun.spawn(["git", "clone", String(args.repositoryUrl), target], { cwd: destination, stdout: "ignore", stderr: "ignore" });
-		let timedOut = false;
-		const abort = () => proc.kill("SIGTERM");
-		context.abortSignal.addEventListener("abort", abort, { once: true });
-		const timer = setTimeout(() => {
-			timedOut = true;
-			abort();
-		}, 120_000);
-		const code = await proc.exited;
-		clearTimeout(timer);
-		context.abortSignal.removeEventListener("abort", abort);
-		if (code !== 0 || context.abortSignal.aborted || timedOut)
-			throw Object.assign(new Error("clone failed"), { code: context.abortSignal.aborted ? "ABORTED" : timedOut ? "OPERATION_FAILED" : "OPERATION_FAILED" });
-		const canonical = await realpath(target);
-		const project = stableProjectId(canonical);
-		registeredProjects.set(project, canonical);
-		await persistCatalog();
-		return { project: { projectId: project, name } };
-	};
+	const projects = new AppserverProjectAuthority({
+		homeDirectory: options.projectHomeDirectory ?? process.env.HOME ?? process.cwd(),
+		catalogMetadataPath: options.projectCatalogMetadataPath ?? path.join(getAgentDir(), "appserver", "projects.json"),
+		...(options.projectCloneRunner ? { cloneRunner: options.projectCloneRunner } : {}),
+	});
 	const refresh = async (): Promise<SessionRecord[]> => {
 		await ensureRecovered();
 		const archived = await lifecycle.archivedSessions();
@@ -293,8 +198,7 @@ export function createAppserverRuntime(options: AppserverAuthorityOptions = {}):
 		return projectRootForSessionSync(session);
 	};
 	const projectRootForProject = async (project: ProjectId): Promise<string> => {
-		await catalogLoaded;
-		const registered = registeredProjects.get(project);
+		const registered = await projects.resolve(project);
 		if (registered) return registered;
 		return resolveProjectRootFromRecords(project, await discovery.list(), projectCatalog);
 	};
@@ -321,9 +225,9 @@ export function createAppserverRuntime(options: AppserverAuthorityOptions = {}):
 			? createAppserverUsageAuthority(options.authStorage, options.modelRegistry)
 			: undefined);
 	const operations: DesktopOperationsAuthority = {
-		projectBrowse: (args) => projectBrowse(args),
-		projectRegister: (args) => projectRegister(args),
-		projectClone: (args, context) => projectClone(args, context),
+		projectBrowse: args => projects.browse(args),
+		projectRegister: args => projects.register(args),
+		projectClone: (args, context) => projects.clone(args, context.abortSignal),
 		brokerStatus: async (_args, context) =>
 			(await brokerStatus(context.abortSignal)) as unknown as Record<string, unknown>,
 		filesRead: (args, context) =>
