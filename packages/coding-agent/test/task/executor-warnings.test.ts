@@ -359,6 +359,57 @@ describe("subagent warning injection", () => {
 		});
 	});
 
+	it("recovers raw output for explicit useLastTurn when session salvage is unavailable", () => {
+		// Invariant: only an explicit terminal useLastTurn may treat captured
+		// rawOutput as the prior assistant turn; ordinary missing data still warns.
+		const result = finalizeSubprocessOutput({
+			rawOutput: "GROK_SUBAGENT_BETA_OK",
+			exitCode: 0,
+			stderr: "",
+			doneAborted: false,
+			signalAborted: false,
+			yieldItems: [{ status: "success", useLastTurn: true }],
+			outputSchema: undefined,
+		});
+
+		expect(result.rawOutput).toBe("GROK_SUBAGENT_BETA_OK");
+		expect(result.exitCode).toBe(0);
+		expect(result.rawOutput.includes("SYSTEM WARNING")).toBe(false);
+	});
+	it("uses only the latest completed assistant turn for explicit useLastTurn salvage", () => {
+		// message_end output is accumulated for progress, but terminal
+		// useLastTurn must not return concatenated prose from earlier turns.
+		const result = finalizeSubprocessOutput({
+			rawOutput: "FIRST ASSISTANT TURN\nSECOND ASSISTANT TURN",
+			exitCode: 0,
+			stderr: "",
+			doneAborted: false,
+			signalAborted: false,
+			yieldItems: [{ status: "success", useLastTurn: true }],
+			outputSchema: undefined,
+			lastAssistantText: "SECOND ASSISTANT TURN",
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(result.rawOutput).toBe("SECOND ASSISTANT TURN");
+		expect(result.rawOutput).not.toContain("FIRST ASSISTANT TURN");
+	});
+
+	it("keeps the null-yield warning when explicit useLastTurn has blank raw output", () => {
+		const result = finalizeSubprocessOutput({
+			rawOutput: "",
+			exitCode: 0,
+			stderr: "",
+			doneAborted: false,
+			signalAborted: false,
+			yieldItems: [{ status: "success", useLastTurn: true }],
+			outputSchema: undefined,
+		});
+
+		expect(result.rawOutput).toBe(SUBAGENT_WARNING_NULL_YIELD);
+		expect(result.exitCode).toBe(0);
+	});
+
 	it("serializes untyped useLastTurn yield as raw text", () => {
 		const result = finalizeSubprocessOutput({
 			rawOutput: "",

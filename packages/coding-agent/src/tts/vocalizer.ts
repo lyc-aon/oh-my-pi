@@ -294,7 +294,17 @@ export class Vocalizer {
 		await this.#acquireSlot();
 		try {
 			if (signal.aborted || !this.#enhancer) return null;
-			return await this.#enhancer.rewrite(block, signal);
+			try {
+				return await this.#enhancer.rewrite(block, signal);
+			} catch (error) {
+				// Rewriting is an enhancement only: a failed model call must fall
+				// back to mechanical cleanup instead of rejecting the ordered
+				// playback chain and dropping the utterance tail.
+				logger.debug("vocalizer: rewrite failed; using mechanical cleanup", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+				return null;
+			}
 		} finally {
 			this.#releaseSlot();
 		}

@@ -125,10 +125,16 @@ export class AgentTranscriptProjection {
 		state.queued = true;
 		if (state.inFlight) return;
 		state.inFlight = true;
-		void this.#drain(state).finally(() => {
-			state.inFlight = false;
-			if (state.queued && !this.#disposed) queueMicrotask(() => this.refresh(agentId));
-		});
+		void this.#drain(state).then(
+			() => this.#finishDrain(state),
+			() => this.#finishDrain(state),
+		);
+	}
+
+	#finishDrain(state: AgentTranscriptState): void {
+		state.inFlight = false;
+		if (!state.queued || this.#disposed || this.#states.get(state.agentId) !== state) return;
+		queueMicrotask(() => this.refresh(state.agentId));
 	}
 
 	frames(): AgentTranscriptFrame[] {

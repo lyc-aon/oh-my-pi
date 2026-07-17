@@ -36,7 +36,6 @@ type DiscoveryFileSystem = FileSystem & {
 	) => Promise<string | Uint8Array>;
 };
 const OBSERVER_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
-const OBSERVER_TAIL_ANCHOR_BYTES = 4 * 1024;
 const realFs: DiscoveryFileSystem = {
 	mkdir: async (path, options) => {
 		await mkdir(path, options);
@@ -872,7 +871,40 @@ export class SessionTranscriptObserver {
 	#forceReset = false;
 	#observedSize = -1;
 	#observedStamp = "";
-	#tailAnchor = new Uint8Array();
+	#prefixHash = createHash("sha256");
+	#prefixStillMatches = async (identity: string): Promise<boolean> => {
+		if (this.#offset === 0) return true;
+		const expected = this.#prefixHash.copy().digest();
+		const actual = createHash("sha256");
+		if (!this.#fs.readFileRange) {
+			const chunk = await this.#fs.readFile(this.#path);
+			const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+			if (bytes.byteLength < this.#offset) return false;
+			actual.update(bytes.subarray(0, this.#offset));
+		} else {
+			for (let offset = 0; offset < this.#offset; ) {
+				const amount = Math.min(OBSERVER_MAX_BUFFER_BYTES, this.#offset - offset);
+				const chunk = await this.#fs.readFileRange(this.#path, offset, amount, identity);
+				const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+				if (bytes.byteLength !== amount) return false;
+				actual.update(bytes);
+				offset += amount;
+			}
+		}
+		return actual.digest().equals(expected);
+	};
+	async #rangeStillMatches(identity: string, start: number, expected: Uint8Array): Promise<boolean> {
+		const chunk = this.#fs.readFileRange
+			? await this.#fs.readFileRange(this.#path, start, expected.byteLength, identity)
+			: await this.#fs.readFile(this.#path);
+		const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+		const candidate = this.#fs.readFileRange
+			? bytes.slice(0, expected.byteLength)
+			: bytes.slice(start, start + expected.byteLength);
+		if (candidate.byteLength !== expected.byteLength) return false;
+		for (let index = 0; index < candidate.byteLength; index++) if (candidate[index] !== expected[index]) return false;
+		return true;
+	}
 	#slotTitle?: string;
 	#headerTitle?: string;
 	#projector?: SessionEntryProjector;
@@ -890,30 +922,6 @@ export class SessionTranscriptObserver {
 	}
 	#stampOf(info: DiscoveryStat): string {
 		return `${info.mtimeMs}:${info.ctimeMs ?? ""}`;
-	}
-	async #tailStillMatches(identity: string): Promise<boolean> {
-		if (this.#tailAnchor.byteLength === 0 || this.#offset < this.#tailAnchor.byteLength) return true;
-		const start = this.#offset - this.#tailAnchor.byteLength;
-		const chunk = this.#fs.readFileRange
-			? await this.#fs.readFileRange(this.#path, start, this.#tailAnchor.byteLength, identity)
-			: await this.#fs.readFile(this.#path);
-		const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
-		const candidate = this.#fs.readFileRange
-			? bytes.slice(0, this.#tailAnchor.byteLength)
-			: bytes.slice(start, start + this.#tailAnchor.byteLength);
-		if (candidate.byteLength !== this.#tailAnchor.byteLength) return false;
-		for (let index = 0; index < candidate.byteLength; index++)
-			if (candidate[index] !== this.#tailAnchor[index]) return false;
-		return true;
-	}
-	#rememberTail(bytes: Uint8Array): void {
-		const length = Math.min(OBSERVER_TAIL_ANCHOR_BYTES, this.#tailAnchor.byteLength + bytes.byteLength);
-		const next = new Uint8Array(length);
-		const fromPrior = Math.min(this.#tailAnchor.byteLength, Math.max(0, length - bytes.byteLength));
-		if (fromPrior > 0) next.set(this.#tailAnchor.subarray(this.#tailAnchor.byteLength - fromPrior), 0);
-		const fromCurrent = Math.min(bytes.byteLength, length);
-		if (fromCurrent > 0) next.set(bytes.subarray(bytes.byteLength - fromCurrent), length - fromCurrent);
-		this.#tailAnchor = next;
 	}
 	#result(
 		entries: readonly DurableEntry[],
@@ -956,7 +964,7 @@ export class SessionTranscriptObserver {
 		this.#observedStamp = "";
 		this.#slotTitle = undefined;
 		this.#headerTitle = undefined;
-		this.#tailAnchor = new Uint8Array();
+		this.#prefixHash = createHash("sha256");
 	}
 	#observeEof(identity: string, size: number): boolean {
 		try {
@@ -996,24 +1004,36 @@ export class SessionTranscriptObserver {
 				(info.size === this.#observedSize && this.#stampOf(info) !== this.#observedStamp));
 		let rewrittenWhileGrowing = false;
 		if (
+			!this.#forceReset &&
 			identity === this.#identity &&
 			this.#observedSize >= 0 &&
-			info.size > this.#observedSize &&
-			this.#stampOf(info) !== this.#observedStamp
+			info.size > this.#observedSize
 		) {
 			try {
-				rewrittenWhileGrowing = !(await this.#tailStillMatches(identity));
+				const prefixMatches = await this.#prefixStillMatches(identity);
+				const afterPrefix = await this.#fs.stat(this.#path);
+				if (
+					this.#identityOf(afterPrefix) !== identity ||
+					afterPrefix.size < info.size ||
+					(afterPrefix.size === info.size && this.#stampOf(afterPrefix) !== this.#stampOf(info))
+				)
+					throw new Error("transcript changed while verifying prefix");
+				rewrittenWhileGrowing = !prefixMatches;
 			} catch {
 				this.#invalidate(true);
 				return this.#result([], false, false, "snapshot");
 			}
 		}
+		if (rewrittenWhileGrowing && this.#record?.entries.length) {
+			this.#invalidate(true);
+			return this.#result([], false, false, "snapshot");
+		}
 		const reset =
 			this.#forceReset ||
 			identity !== this.#identity ||
 			info.size < this.#offset ||
-			rewrittenInPlace ||
-			rewrittenWhileGrowing;
+			rewrittenWhileGrowing ||
+			rewrittenInPlace;
 		if (reset) this.#reset(identity);
 		if (!reset && info.size === this.#offset) {
 			if (!this.#observeEof(identity, info.size)) return this.#result([], false, false, "snapshot");
@@ -1030,7 +1050,9 @@ export class SessionTranscriptObserver {
 		}
 		const readOffset = this.#offset;
 		let chunk: string | Uint8Array;
+		let fullBytes: Uint8Array;
 		let fullFallback = false;
+		let grewDuringRead = false;
 		try {
 			if (this.#fs.readFileRange)
 				chunk = await this.#fs.readFileRange(this.#path, readOffset, bytesToRead, identity);
@@ -1038,24 +1060,35 @@ export class SessionTranscriptObserver {
 				chunk = await this.#fs.readFile(this.#path);
 				fullFallback = true;
 			}
+			fullBytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+			if (fullFallback && fullBytes.byteLength < readOffset) throw new Error("transcript changed while reading");
+			const rawRead = fullFallback
+				? fullBytes.slice(readOffset, readOffset + bytesToRead)
+				: fullBytes.slice(0, bytesToRead);
 			const afterRead = await this.#fs.stat(this.#path);
-			if (
-				this.#identityOf(afterRead) !== identity ||
-				afterRead.size !== info.size ||
-				this.#stampOf(afterRead) !== this.#stampOf(info)
-			)
+			if (this.#identityOf(afterRead) !== identity || afterRead.size < info.size)
 				throw new Error("transcript changed while reading");
+			if (afterRead.size === info.size && this.#stampOf(afterRead) !== this.#stampOf(info))
+				throw new Error("transcript rewritten while reading");
+			grewDuringRead = afterRead.size > info.size;
+			if (grewDuringRead) {
+				if (!(await this.#prefixStillMatches(identity))) throw new Error("transcript prefix changed while reading");
+				if (!(await this.#rangeStillMatches(identity, readOffset, rawRead)))
+					throw new Error("transcript read range changed while reading");
+				const afterVerification = await this.#fs.stat(this.#path);
+				if (
+					this.#identityOf(afterVerification) !== identity ||
+					afterVerification.size !== afterRead.size ||
+					this.#stampOf(afterVerification) !== this.#stampOf(afterRead)
+				)
+					throw new Error("transcript changed while verifying");
+			}
 		} catch {
 			this.#invalidate(true);
 			return this.#result([], reset, false, "snapshot");
 		}
 		this.#observedSize = info.size;
 		this.#observedStamp = this.#stampOf(info);
-		const fullBytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
-		if (fullFallback && fullBytes.byteLength < readOffset) {
-			this.#invalidate(true);
-			return this.#result([], reset, false, "snapshot");
-		}
 		const raw = fullFallback
 			? fullBytes.slice(readOffset, readOffset + bytesToRead)
 			: fullBytes.slice(0, bytesToRead);
@@ -1066,7 +1099,7 @@ export class SessionTranscriptObserver {
 			this.#invalidate(true);
 			return this.#result([], reset, false, "snapshot");
 		}
-		this.#rememberTail(raw);
+		this.#prefixHash.update(raw);
 		const pending = this.#pending + text;
 		if (encoder.encode(pending).byteLength > OBSERVER_MAX_BUFFER_BYTES) {
 			this.#invalidate(true);
@@ -1175,9 +1208,9 @@ export class SessionTranscriptObserver {
 			this.#record.updatedAt = new Date(info.mtimeMs).toISOString();
 			this.#record.entries = this.#projector?.entries ?? [];
 		}
-		if (this.#offset === info.size && !this.#observeEof(identity, info.size))
+		if (this.#offset === info.size && !grewDuringRead && !this.#observeEof(identity, info.size))
 			return this.#result([], reset, false, "snapshot");
-		if (this.#offset !== info.size) this.#invalidate();
+		if (this.#offset !== info.size || grewDuringRead) this.#invalidate();
 		this.#observedSize = info.size;
 		this.#observedStamp = this.#stampOf(info);
 		return this.#result(entries, reset, true);

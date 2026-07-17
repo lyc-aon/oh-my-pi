@@ -18,6 +18,7 @@
 - Reused content-addressed native addons from prior successful branch builds and split Rust checks from native packaging, shortening appserver-only release runs without weakening the release gates.
 - Appserver remote listener mode, bind address, port, and browser origins now persist in host-local `agent/local/config.yml` instead of synchronized profile config.
 - Session-scoped Bash and Python execution now read output limits from the active session settings instead of process-global defaults.
+- Desktop settings metadata now derives readable fallback labels for schema paths without UI copy and humanized labels for raw enum values, so dotted keys and machine values never masquerade as user copy; the canonical dotted path stays published for search. Stream-rule (TTSR) settings are labeled "Stream Rules …", speech-to-text language gained explicit settings copy, and Speech Vocalization now says sound plays on the computer running the session.
 
 ### Fixed
 

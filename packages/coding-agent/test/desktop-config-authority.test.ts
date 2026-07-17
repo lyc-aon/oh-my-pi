@@ -392,4 +392,43 @@ describe("DesktopConfigAuthority", () => {
 			expect(a.metadata).not.toHaveProperty("system");
 		}
 	});
+	test("derives readable fallback labels for schema paths without UI copy", async () => {
+		const frame = await authority().catalogGet({});
+		const byPath = new Map(
+			frame.items.filter(item => item.kind === "setting").map(item => [item.metadata!.path as string, item]),
+		);
+		// Dotted camelCase key without ui metadata: humanized, never the raw key.
+		const retry = byPath.get("retry.baseDelayMs");
+		expect(retry!.metadata!.label).toBe("Retry · Base Delay Ms");
+		// Acronym segments stay uppercase.
+		expect(byPath.get("tui.maxInlineImages")!.metadata!.label).toBe("TUI · Max Inline Images");
+		// The canonical dotted key stays discoverable as explicit metadata.
+		expect(retry!.metadata!.path).toBe("retry.baseDelayMs");
+		// No published label is a bare dotted schema key.
+		for (const [path, item] of byPath) expect(item.metadata!.label).not.toBe(path);
+	});
+	test("explicit UI labels win over derived fallbacks", async () => {
+		const frame = await authority().catalogGet({});
+		const byPath = new Map(
+			frame.items.filter(item => item.kind === "setting").map(item => [item.metadata!.path as string, item]),
+		);
+		expect(byPath.get("stt.language")!.metadata!.label).toBe("Speech-to-Text Language");
+		expect(byPath.get("ttsr.enabled")!.metadata!.label).toBe("Stream Rules");
+		expect(byPath.get("speech.enabled")!.metadata!.label).toBe("Speech Vocalization");
+		// Host speech plays where the session runs; the copy says so.
+		expect(byPath.get("speech.enabled")!.metadata!.description).toContain("computer running the session");
+	});
+	test("humanizes kebab enum values into option labels while keeping machine values", () => {
+		const frame = authority().settingsRead({ paths: ["ttsr.repeatMode", "ttsr.contextMode"] });
+		const repeat = frame.settings["ttsr.repeatMode"] as Record<string, unknown>;
+		expect(repeat.options).toEqual([
+			{ value: "once", label: "Once" },
+			{ value: "after-gap", label: "After Gap" },
+		]);
+		const context = frame.settings["ttsr.contextMode"] as Record<string, unknown>;
+		expect(context.options).toEqual([
+			{ value: "discard", label: "Discard" },
+			{ value: "keep", label: "Keep" },
+		]);
+	});
 });

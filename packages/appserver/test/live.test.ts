@@ -5296,6 +5296,66 @@ describe("WS command boundary, authority, confirmation, and lock lifecycle", () 
 		}
 	});
 
+	test("external refresh publishes control from its post-poll lock sample", async () => {
+		const root = await mkdtemp(join(tmpdir(), "omp-observer-post-poll-lock-"));
+		const transcriptPath = join(root, "s1.jsonl");
+		await replaceTranscript(transcriptPath, transcript("s1"));
+		const statuses: Array<"live" | "missing"> = ["live", "missing", "missing", "live"];
+		const samples: string[] = [];
+		const appserver = createAppserver({
+			hostId: host,
+			epoch,
+			socketPath: join(root, "app.sock"),
+			discovery: new StaticDiscovery([{ ...record("s1"), path: transcriptPath }]),
+			lockStatus: () => {
+				const status = statuses.shift() ?? "live";
+				samples.push(status);
+				return status;
+			},
+			childFactory: new LiveFactory(),
+		});
+		await appserver.start();
+		const client = await readyClient(appserver.socketPath, ["sessions.read"]);
+		try {
+			client.client.sendJson(
+				command("post-poll-live-missing", "post-poll-live-missing", "session.attach", "s1", {}),
+			);
+			const first = await untilResponse(client.client, "post-poll-live-missing");
+			expect(first.response.ok).toBe(true);
+			expect(samples).toEqual(["live", "missing", "missing", "live"]);
+			expect(first.frames).toContainEqual(
+				expect.objectContaining({
+					type: "session.delta",
+					upsert: expect.objectContaining({
+						liveState: expect.objectContaining({
+							sessionControl: { mode: "reconciling", transcript: "live" },
+						}),
+					}),
+				}),
+			);
+			expect(first.frames).toContainEqual(
+				expect.objectContaining({
+					type: "session.delta",
+					upsert: expect.objectContaining({
+						liveState: expect.objectContaining({
+							sessionControl: { mode: "observer", lockStatus: "live", transcript: "live" },
+						}),
+					}),
+				}),
+			);
+			expect((await client.client.nextServer()).type).toBe("snapshot");
+			expect(appserver.snapshot(sid("s1"))?.ref.liveState?.sessionControl).toEqual({
+				mode: "observer",
+				lockStatus: "live",
+				transcript: "live",
+			});
+		} finally {
+			await closeClients([client.client]);
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	test("stale first attach publishes reconciling, rejects writes, and promotes only after lock removal", async () => {
 		const root = await mkdtemp(join(tmpdir(), "omp-observer-stale-first-attach-"));
 		const transcriptPath = join(root, "s1.jsonl");
@@ -5367,6 +5427,55 @@ describe("WS command boundary, authority, confirmation, and lock lifecycle", () 
 			expect(removedAttachFrames).toContainEqual(expect.objectContaining({ type: "response", ok: true }));
 			expect(factory.children).toHaveLength(1);
 			expect(appserver.snapshot(sid("s1"))?.ref.liveState?.sessionControl).toBeUndefined();
+		} finally {
+			await closeClients([client.client]);
+			await appserver.stop();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("authoritative session lists set and clear unattached lock control without polling", async () => {
+		const root = await mkdtemp(join(tmpdir(), "omp-list-lock-control-"));
+		const records: SessionRecord[] = [{ ...record("s1"), path: join(root, "not-read.jsonl") }];
+		let lockStatus: "live" | "missing" = "live";
+		const appserver = createAppserver({
+			hostId: host,
+			epoch,
+			socketPath: join(root, "app.sock"),
+			discovery: new StaticDiscovery(records),
+			lockStatus: () => lockStatus,
+		});
+		await appserver.start();
+		const client = await readyClient(appserver.socketPath, ["sessions.read"]);
+		try {
+			client.client.sendJson(hostCommand("list-locked", "list-locked", "session.list", {}));
+			const locked = await untilResponse(client.client, "list-locked");
+			expect(locked.response.ok).toBe(true);
+			expect(appserver.snapshot(sid("s1"))?.ref.liveState?.sessionControl).toEqual({
+				mode: "observer",
+				lockStatus: "live",
+				transcript: "snapshot",
+			});
+			expect(locked.frames).toContainEqual(
+				expect.objectContaining({
+					type: "session.delta",
+					upsert: expect.objectContaining({
+						liveState: { sessionControl: { mode: "observer", lockStatus: "live", transcript: "snapshot" } },
+					}),
+				}),
+			);
+
+			lockStatus = "missing";
+			client.client.sendJson(hostCommand("list-cleared", "list-cleared", "session.list", {}));
+			const cleared = await untilResponse(client.client, "list-cleared");
+			expect(cleared.response.ok).toBe(true);
+			expect(appserver.snapshot(sid("s1"))?.ref.liveState?.sessionControl).toBeUndefined();
+			expect(cleared.frames).toContainEqual(
+				expect.objectContaining({
+					type: "session.delta",
+					upsert: expect.not.objectContaining({ liveState: expect.anything() }),
+				}),
+			);
 		} finally {
 			await closeClients([client.client]);
 			await appserver.stop();

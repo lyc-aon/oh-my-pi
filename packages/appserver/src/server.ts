@@ -2864,6 +2864,30 @@ export class LocalAppserver implements AppserverHandle {
 			);
 		}
 	}
+	private inspectSessionLock(record: SessionRecord): SessionLockStatus {
+		try {
+			return this.#lockStatus(record);
+		} catch {
+			return "malformed";
+		}
+	}
+	private async reconcileUnattachedControl(record: SessionRecord, projection: SessionProjection): Promise<void> {
+		if (
+			this.hasAttachedClient(record.sessionId) ||
+			this.#supervisors.has(record.sessionId) ||
+			this.#startPromises.has(record.sessionId)
+		)
+			return;
+		const status = this.inspectSessionLock(record);
+		const control =
+			status === "missing"
+				? undefined
+				: status === "stale"
+					? { mode: "reconciling" as const, transcript: "snapshot" as const }
+					: { mode: "observer" as const, lockStatus: status, transcript: "snapshot" as const };
+		const output = projection.setSessionControl(control);
+		if (output) await this.broadcastIndex(output);
+	}
 	private refreshSessions(): Promise<void> {
 		if (this.#sessionRefresh) return this.#sessionRefresh;
 		const refresh = this.refreshSessionsOnce();
@@ -2886,10 +2910,11 @@ export class LocalAppserver implements AppserverHandle {
 			this.#records.set(record.sessionId, record);
 			this.#discoveryMisses.delete(record.sessionId);
 			this.#createdPending.delete(record.sessionId);
-			const projection = this.#projections.get(record.sessionId);
+			let projection = this.#projections.get(record.sessionId);
 			if (!projection) {
 				const inserted = new SessionProjection(this.hostId, record, this.epoch, this.#ringSize);
 				this.#projections.set(record.sessionId, inserted);
+				projection = inserted;
 				await this.broadcastIndex(inserted.indexUpsert());
 			} else {
 				const output = projection.value.ref.liveState?.sessionControl
@@ -2897,6 +2922,7 @@ export class LocalAppserver implements AppserverHandle {
 					: projection.reconcileRecord(record);
 				if (output) await this.broadcastIndex(output);
 			}
+			await this.reconcileUnattachedControl(record, projection);
 		}
 		for (const [sessionId, pending] of this.#createdPending) {
 			if (discoveredIds.has(sessionId)) {
@@ -3040,60 +3066,42 @@ export class LocalAppserver implements AppserverHandle {
 		if (!record || !projection) return;
 		// A local child owns the session. Never let external bytes rebase it.
 		if (this.#supervisors.has(sessionId)) return;
-		let status: SessionLockStatus;
-		try {
-			status = this.#lockStatus(record);
-		} catch {
-			status = "malformed";
-		}
-		if (status === "live" || status === "suspect" || status === "malformed") {
-			this.#promotionFailures.delete(sessionId);
-			let observer = this.#observers.get(sessionId);
-			if (!observer) {
-				observer = new SessionTranscriptObserver(record.path, this.hostId);
-				this.#observers.set(sessionId, observer);
-			}
-			const poll = await observer.poll();
-			const transcript = poll.record && poll.record.sessionId !== sessionId ? "snapshot" : poll.transcript;
-			if (this.#supervisors.has(sessionId) || this.#startPromises.has(sessionId)) return;
-			if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
-			if (poll.record?.sessionId === sessionId) await this.applyObserverPoll(sessionId, projection, poll);
-			if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
-			const control = projection.setSessionControl({
-				mode: "observer",
-				lockStatus: status,
-				transcript,
-			});
-			if (control) await this.broadcastIndex(control);
-			return;
-		}
+		const initialStatus = this.inspectSessionLock(record);
 		let observer = this.#observers.get(sessionId);
 		if (!observer) {
-			if (status === "missing" && !projection.value.ref.liveState?.sessionControl) return;
+			if (initialStatus === "missing" && !projection.value.ref.liveState?.sessionControl) return;
 			observer = new SessionTranscriptObserver(record.path, this.hostId);
 			this.#observers.set(sessionId, observer);
 		}
 		const poll = await observer.poll();
+		const postPollRecord = this.#records.get(sessionId) ?? record;
+		const postPollStatus = this.inspectSessionLock(postPollRecord);
 		if (this.#supervisors.has(sessionId) || this.#startPromises.has(sessionId)) return;
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
 		const pollRecordMatches = poll.record?.sessionId === sessionId;
 		if (pollRecordMatches) await this.applyObserverPoll(sessionId, projection, poll);
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
+		const transcript = pollRecordMatches ? poll.transcript : "snapshot";
+		if (postPollStatus === "live" || postPollStatus === "suspect" || postPollStatus === "malformed") {
+			this.#promotionFailures.delete(sessionId);
+			const control = projection.setSessionControl({
+				mode: "observer",
+				lockStatus: postPollStatus,
+				transcript,
+			});
+			if (control) await this.broadcastIndex(control);
+			return;
+		}
 		const reconciling = projection.setSessionControl({
 			mode: "reconciling",
-			transcript: pollRecordMatches ? poll.transcript : "snapshot",
+			transcript,
 		});
 		if (reconciling) await this.broadcastIndex(reconciling);
 		if (!this.observerIsCurrent(sessionId, observer, record, projection)) return;
 		if (!this.hasAttachedClient(sessionId)) return;
 		if (!pollRecordMatches || !poll.stable || poll.transcript !== "live") return;
 		if (poll.unresolvedPendingCount !== 0) return;
-		let promotionLockStatus: SessionLockStatus;
-		try {
-			promotionLockStatus = this.#lockStatus(record);
-		} catch {
-			promotionLockStatus = "malformed";
-		}
+		const promotionLockStatus = this.inspectSessionLock(this.#records.get(sessionId) ?? record);
 		if (promotionLockStatus !== "missing") return;
 		const attemptFingerprint = this.promotionFingerprint(record, projection, poll);
 		if (this.#promotionFailures.get(sessionId) === attemptFingerprint) return;

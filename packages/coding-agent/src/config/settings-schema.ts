@@ -1971,6 +1971,12 @@ export const SETTINGS_SCHEMA = {
 	"stt.language": {
 		type: "string",
 		default: "en",
+		ui: {
+			tab: "interaction",
+			group: "Speech",
+			label: "Speech-to-Text Language",
+			description: "Language spoken during dictation, as a short code like en, de, or fr",
+		},
 	},
 
 	"stt.modelName": {
@@ -2940,7 +2946,7 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "context",
 			group: "Rules (TTSR)",
-			label: "TTSR",
+			label: "Stream Rules",
 			description: "Interrupt the agent mid-stream when output matches rule patterns (Time-Traveling Stream Rules)",
 		},
 	},
@@ -2952,8 +2958,8 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "context",
 			group: "Rules (TTSR)",
-			label: "TTSR Context Mode",
-			description: "What to do with partial output when TTSR triggers",
+			label: "Stream Rules Context",
+			description: "What to do with partial output when a stream rule triggers",
 		},
 	},
 
@@ -2964,13 +2970,13 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "context",
 			group: "Rules (TTSR)",
-			label: "TTSR Interrupt Mode",
-			description: "When to interrupt mid-stream vs inject warning after completion",
+			label: "Stream Rules Interruptions",
+			description: "When to interrupt mid-stream vs inject a warning after completion",
 			options: [
-				{ value: "always", label: "always", description: "Interrupt on prose and tool streams" },
-				{ value: "prose-only", label: "prose-only", description: "Interrupt only on reply/thinking matches" },
-				{ value: "tool-only", label: "tool-only", description: "Interrupt only on tool-call argument matches" },
-				{ value: "never", label: "never", description: "Never interrupt; inject warning after completion" },
+				{ value: "always", label: "Always", description: "Interrupt on prose and tool streams" },
+				{ value: "prose-only", label: "Prose Only", description: "Interrupt only on reply/thinking matches" },
+				{ value: "tool-only", label: "Tool Only", description: "Interrupt only on tool-call argument matches" },
+				{ value: "never", label: "Never", description: "Never interrupt; inject warning after completion" },
 			],
 		},
 	},
@@ -2982,7 +2988,7 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "context",
 			group: "Rules (TTSR)",
-			label: "TTSR Repeat Mode",
+			label: "Stream Rules Repeat",
 			description: "How rules can repeat: once per session or after a message gap",
 		},
 	},
@@ -2993,7 +2999,7 @@ export const SETTINGS_SCHEMA = {
 		ui: {
 			tab: "context",
 			group: "Rules (TTSR)",
-			label: "TTSR Repeat Gap",
+			label: "Stream Rules Repeat Gap",
 			description: "Messages before a rule can trigger again",
 			options: [
 				{ value: "5", label: "5 messages" },
@@ -4684,7 +4690,8 @@ export const SETTINGS_SCHEMA = {
 			tab: "providers",
 			group: "Services",
 			label: "Speech Vocalization",
-			description: "Speak the assistant's output aloud through the speakers as it streams",
+			description:
+				"Speak the assistant's replies aloud as they stream. Sound plays on the computer running the session",
 		},
 	},
 	"speech.mode": {

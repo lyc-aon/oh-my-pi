@@ -163,9 +163,57 @@ function settingSensitive(path: string): boolean {
 function sourceFor(settings: DesktopSettingsPort, path: SettingPath): string {
 	return settings.getDesktopSnapshot(path).source;
 }
+/** Acronyms kept uppercase when a schema path or enum value is humanized. */
+const LABEL_ACRONYMS: Record<string, true> = {
+	ai: true,
+	api: true,
+	cli: true,
+	cwd: true,
+	db: true,
+	gc: true,
+	id: true,
+	io: true,
+	lsp: true,
+	mcp: true,
+	qa: true,
+	stt: true,
+	tts: true,
+	ttsr: true,
+	ttl: true,
+	tui: true,
+	url: true,
+	wal: true,
+};
+function humanizeWord(word: string): string {
+	if (LABEL_ACRONYMS[word.toLowerCase()]) return word.toUpperCase();
+	return word.charAt(0).toUpperCase() + word.slice(1);
+}
+/** `maxInlineImages` / `prose-only` / `after_gap` → spaced Title Case words. */
+function humanizeKeySegment(segment: string): string {
+	return segment
+		.replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+		.split(/[-_\s]+/u)
+		.filter(Boolean)
+		.map(humanizeWord)
+		.join(" ");
+}
+/**
+ * Deterministic label for a schema path without explicit UI copy, so raw
+ * dotted keys never masquerade as user copy. `tui.maxInlineImages` →
+ * "TUI · Max Inline Images". The dotted path itself stays published as
+ * `metadata.path` for search and provenance.
+ */
+function fallbackSettingLabel(path: string): string {
+	return path.split(".").map(humanizeKeySegment).join(" · ");
+}
 function controlMetadata(def: SettingDefinition): Record<string, unknown> {
 	const result: Record<string, unknown> = { controlType: def.type };
-	if (Array.isArray(def.values)) result.options = def.values.slice(0, 256);
+	if (Array.isArray(def.values))
+		result.options = def.values
+			.slice(0, 256)
+			.map(value =>
+				typeof value === "string" ? { value, label: humanizeKeySegment(value) } : { value: safeMetadata(value) },
+			);
 	const ui = def.ui;
 	if (ui && Array.isArray(ui.options))
 		result.options = ui.options
@@ -427,7 +475,7 @@ export class DesktopConfigAuthority {
 				const configured = this.#settings.isConfigured?.(path as SettingPath) ?? false;
 				const metadata: Record<string, unknown> = {
 					path,
-					label: text(ui?.label) ?? path,
+					label: text(ui?.label) ?? fallbackSettingLabel(path),
 					description: text(ui?.description),
 					...controlMetadata(def),
 					default: sensitive ? undefined : safeMetadata(def.default),

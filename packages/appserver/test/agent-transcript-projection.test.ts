@@ -395,6 +395,78 @@ describe("AgentTranscriptProjection", () => {
 		});
 	});
 
+	test("retries after a failed read without consuming the later refresh", async () => {
+		let attempts = 0;
+		const emitted: AgentTranscriptFrame[] = [];
+		const projection = new AgentTranscriptProjection({
+			hostId: host,
+			sessionId: session,
+			epoch: "parent-epoch",
+			read: async (_agent, fromByte) => {
+				attempts++;
+				if (attempts === 1) throw new Error("transient read failure");
+				if (attempts > 2) return transcriptResult(fromByte, fromByte);
+				return transcriptResult(
+					fromByte,
+					fromByte + 1,
+					transcriptEntries({
+						type: "message",
+						id: "after-retry",
+						parentId: null,
+						timestamp: "2026-07-15T00:00:00.000Z",
+						message: { role: "assistant", content: "recovered" },
+					}),
+				);
+			},
+			revision: () => currentRevision,
+			emit: frame => emitted.push(frame),
+		});
+
+		projection.refresh("WorkerA");
+		await waitUntil(() => attempts === 1);
+		projection.refresh("WorkerA");
+		await waitUntil(() => emitted.length === 1);
+		expect(attempts).toBe(3);
+		expect(emitted[0]?.entries[0]?.data.text).toBe("recovered");
+	});
+
+	test("dispose during an awaited read suppresses late state and emission", async () => {
+		const read = Promise.withResolvers<RpcSubagentMessagesResult>();
+		const readStarted = Promise.withResolvers<void>();
+		const emitted: AgentTranscriptFrame[] = [];
+		const projection = new AgentTranscriptProjection({
+			hostId: host,
+			sessionId: session,
+			epoch: "parent-epoch",
+			read: async () => {
+				readStarted.resolve();
+				return read.promise;
+			},
+			revision: () => currentRevision,
+			emit: frame => emitted.push(frame),
+		});
+
+		projection.refresh("WorkerA");
+		await readStarted.promise;
+		projection.dispose();
+		read.resolve(
+			transcriptResult(
+				0,
+				1,
+				transcriptEntries({
+					type: "message",
+					id: "late",
+					parentId: null,
+					timestamp: "2026-07-15T00:00:00.000Z",
+					message: { role: "assistant", content: "must not escape" },
+				}),
+			),
+		);
+		await Promise.resolve();
+		expect(emitted).toEqual([]);
+		expect(projection.frames()).toEqual([]);
+	});
+
 	test("bounds retained agent transcripts with least-recently-used eviction", async () => {
 		const emitted: AgentTranscriptFrame[] = [];
 		const projection = new AgentTranscriptProjection({

@@ -274,28 +274,53 @@ export class TtsClient {
 			if (closed) return;
 			closed = true;
 			ended = true;
-			if (!this.#pending.has(id)) return;
-			this.#deletePending(id);
-			worker.send({ type: "stream-cancel", id });
+			if (this.#pending.has(id)) {
+				this.#deletePending(id);
+				try {
+					worker.send({ type: "stream-cancel", id });
+				} catch {
+					// The worker may already be gone; the channel still must settle.
+				}
+			}
 			channel.close();
 		};
 		const channel = new AudioChunkChannel(() => signal?.removeEventListener("abort", abort));
+		const fail = (error: unknown): void => {
+			if (closed) return;
+			closed = true;
+			ended = true;
+			this.#deletePending(id);
+			channel.fail(error instanceof Error ? error : new Error(String(error)));
+		};
 		this.#addPending(id, { kind: "stream", modelKey, channel });
 		signal?.addEventListener("abort", abort, { once: true });
 
 		const start: TtsWorkerInbound = options.voice
 			? { type: "stream-start", id, modelKey, voice: options.voice }
 			: { type: "stream-start", id, modelKey };
-		worker.send(start);
+		try {
+			worker.send(start);
+		} catch (error) {
+			fail(error);
+		}
 
 		return {
 			push: (text: string) => {
-				if (!closed && !ended) worker.send({ type: "stream-push", id, text });
+				if (closed || ended) return;
+				try {
+					worker.send({ type: "stream-push", id, text });
+				} catch (error) {
+					fail(error);
+				}
 			},
 			end: () => {
 				if (closed || ended) return;
 				ended = true;
-				worker.send({ type: "stream-end", id });
+				try {
+					worker.send({ type: "stream-end", id });
+				} catch (error) {
+					fail(error);
+				}
 			},
 			chunks: channel.iterator(),
 		};
@@ -350,6 +375,7 @@ export class TtsClient {
 			else pending.channel.close();
 		}
 		this.#pending.clear();
+		if (this.#refed) worker?.unref();
 		this.#refed = false;
 		try {
 			await worker?.terminate();
@@ -418,29 +444,65 @@ export class TtsClient {
 					pcm: message.pcm,
 					sampleRate: message.sampleRate,
 				});
+			} else {
+				this.#failKindMismatch(message.id, pending, message.type);
 			}
 			return;
 		}
 
-		this.#deletePending(message.id);
 		if (message.type === "stream-done") {
-			if (pending.kind === "stream") pending.channel.close();
+			if (pending.kind === "stream") {
+				this.#deletePending(message.id);
+				pending.channel.close();
+			} else this.#failKindMismatch(message.id, pending, message.type);
 			return;
 		}
 		if (message.type === "audio") {
-			if (pending.kind === "synthesize") pending.resolve({ pcm: message.pcm, sampleRate: message.sampleRate });
+			if (pending.kind === "synthesize") {
+				this.#deletePending(message.id);
+				pending.resolve({ pcm: message.pcm, sampleRate: message.sampleRate });
+			} else this.#failKindMismatch(message.id, pending, message.type);
 			return;
 		}
 		if (message.type === "downloaded") {
-			if (pending.kind === "download") pending.resolve(true);
+			if (pending.kind === "download") {
+				this.#deletePending(message.id);
+				pending.resolve(true);
+			} else this.#failKindMismatch(message.id, pending, message.type);
 			return;
 		}
+		this.#deletePending(message.id);
 		logger.debug("tts: worker returned error", { error: message.error });
 		this.#emitProgress({ modelKey: pending.modelKey, status: "error" });
 		if (pending.kind === "synthesize") pending.resolve(null);
 		else if (pending.kind === "download") pending.resolve(false);
 		else pending.channel.fail(new Error(message.error));
 		void this.terminate();
+	}
+
+	#failKindMismatch(id: string, pending: PendingRequest, responseType: string): void {
+		const error = new Error(`tts worker returned ${responseType} for ${pending.kind} request`);
+		logger.warn("tts: worker response kind mismatch", { responseType, requestKind: pending.kind });
+		let cancellationFailed = false;
+		try {
+			// A mismatched response can come from a stream session that is parked
+			// on the worker's serialized queue. Cancel that exact session while
+			// the request still keeps the worker referenced, before reusing it.
+			this.#worker?.send({ type: "stream-cancel", id });
+		} catch (cancelError) {
+			// A failed cancellation means this transport cannot be trusted for
+			// reuse; terminate it so a parked stream cannot block the queue.
+			cancellationFailed = true;
+			logger.warn("tts: failed to cancel mismatched worker stream", {
+				error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+			});
+		}
+		this.#deletePending(id);
+		this.#emitProgress({ modelKey: pending.modelKey, status: "error" });
+		if (pending.kind === "synthesize") pending.resolve(null);
+		else if (pending.kind === "download") pending.resolve(false);
+		else pending.channel.fail(error);
+		if (cancellationFailed) void this.terminate();
 	}
 
 	#emitProgress(event: TtsProgressEvent): void {

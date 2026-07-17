@@ -510,7 +510,19 @@ export function finalizeSubprocessOutput(args: FinalizeSubprocessOutputArgs): Fi
 				rawOutput = `{"aborted":true,"error":"${lastYield.error || "Unknown error"}"}`;
 			}
 		} else {
-			const assembled = assembleYieldResult(yieldItems, lastAssistantText, arrayValuedLabels(outputSchema));
+			// `lastAssistantText` is the latest completed turn when the monitor
+			// has no definitive `agent_end` output. Raw output is only a
+			// single-turn fallback when no monitor text is available.
+			// Only an explicit terminal useLastTurn yield may borrow it; ordinary
+			// data-less yields must still take the null-yield warning path.
+			const fallbackAssistantText =
+				lastAssistantText ??
+				(lastYield?.useLastTurn === true &&
+				!(Array.isArray(lastYield.type) && lastYield.type.length > 0) &&
+				rawOutput.trim().length > 0
+					? rawOutput
+					: undefined);
+			const assembled = assembleYieldResult(yieldItems, fallbackAssistantText, arrayValuedLabels(outputSchema));
 			if (!assembled || assembled.missingData) {
 				rawOutput = rawOutput ? `${SUBAGENT_WARNING_NULL_YIELD}\n\n${rawOutput}` : SUBAGENT_WARNING_NULL_YIELD;
 			} else {
@@ -819,8 +831,12 @@ interface SubagentRunMonitor {
 	/** Best-effort capture of the last assistant text for cancelled-run salvage. */
 	captureSalvage(session: AgentSession): void;
 	lastAssistantSalvageText(): string | undefined;
+	/** Latest nonblank assistant turn completed by a message_end event. */
+	latestAssistantTurnText(): string | undefined;
 	/** Final raw output: end-of-run assistant text when available, else accumulated chunks. */
 	rawOutput(): string;
+	/** True when rawOutput comes from an agent_end event, not accumulated turns. */
+	hasFinalOutput(): boolean;
 	scheduleProgress(flush?: boolean): void;
 	/** Stop processing events and clear listeners/timers. Call once the run settled. */
 	finish(): void;
@@ -894,6 +910,7 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 	let budgetStopRequested = false;
 	let budgetStopAbortPromise: Promise<void> | undefined;
 	let lastAssistantSalvageText: string | undefined;
+	let latestAssistantTurnText: string | undefined;
 	let activeSessionAbortPromise: Promise<void> | undefined;
 
 	const abortActiveSession = (): Promise<void> => {
@@ -1306,11 +1323,13 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 					progress.requests += 1;
 					const eventContent = isRecord(event) && "content" in event ? event.content : undefined;
 					const messageContent = getMessageContent(event.message) || eventContent;
+					let assistantTurnText = "";
 					if (messageContent && Array.isArray(messageContent)) {
 						for (const block of messageContent) {
 							if (!isRecord(block)) continue;
 							if (block.type === "text" && typeof block.text === "string") {
 								outputChunks.push(block.text);
+								assistantTurnText += block.text;
 								continue;
 							}
 							if (block.type !== "toolCall" || typeof block.name !== "string") continue;
@@ -1319,6 +1338,9 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 								flushProgress = true;
 							}
 						}
+					}
+					if (assistantTurnText.trim()) {
+						latestAssistantTurnText = assistantTurnText;
 					}
 					if (softRequestBudget > 0 && !abortSent && !yieldCallPending) {
 						const stopThreshold = softRequestBudget * 1.5;
@@ -1516,7 +1538,9 @@ function createSubagentRunMonitor(args: RunMonitorArgs): SubagentRunMonitor {
 		attach,
 		captureSalvage,
 		lastAssistantSalvageText: () => lastAssistantSalvageText,
+		latestAssistantTurnText: () => latestAssistantTurnText,
 		rawOutput: () => (finalOutputChunks.length > 0 ? finalOutputChunks.join("") : outputChunks.join("")),
+		hasFinalOutput: () => finalOutputChunks.length > 0,
 		scheduleProgress,
 		finish: () => {
 			resolved = true;
@@ -1755,7 +1779,7 @@ async function finalizeRunResult(args: FinalizeRunArgs): Promise<SingleResult> {
 			signalAborted: Boolean(signal?.aborted),
 			yieldItems,
 			outputSchema: args.outputSchema,
-			lastAssistantText: monitor.lastAssistantSalvageText(),
+			lastAssistantText: monitor.hasFinalOutput() ? rawOutput : monitor.latestAssistantTurnText(),
 		});
 	} finally {
 		popLoopPhase();

@@ -1249,6 +1249,220 @@ test("observer keeps partial final lines live until newline then needs one uncha
 	expect((await observer.poll()).stable).toBe(true);
 });
 
+test("observer keeps parsed progress when the same inode grows during a bounded read", async () => {
+	const encoder = new TextEncoder();
+	const header = `${sessionTranscript("observer-growing", "/tmp/growing", "Growing")}\n`;
+	const seed = `${Array.from({ length: 320 }, (_, index) =>
+		line({
+			type: "message",
+			id: `seed-${index}`,
+			parentId: null,
+			timestamp: stamp,
+			message: { role: "user", content: `seed-${index}-${"x".repeat(7_000)}` },
+		}),
+	).join("\n")}\n`;
+	const appended = `${line({
+		type: "message",
+		id: "appended-during-read",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "appended durable tail" },
+	})}\n`;
+	const initial = encoder.encode(header + seed);
+	const state = observerFsState(initial);
+	const originalRange = state.fs.readFileRange;
+	let grew = false;
+	state.fs.readFileRange = async (path, offset, maxBytes) => {
+		const result = await originalRange(path, offset, maxBytes);
+		if (!grew) {
+			grew = true;
+			state.setContent(new Uint8Array([...initial, ...encoder.encode(appended)]));
+		}
+		return result;
+	};
+	const observer = new SessionTranscriptObserver("/tmp/growing.jsonl", host, state.fs);
+	const first = await observer.poll();
+	expect(first.transcript).toBe("live");
+	expect(first.reset).toBe(true);
+	expect(first.stable).toBe(false);
+	expect(first.watermark.entryCount).toBeGreaterThan(0);
+	const second = await observer.poll();
+	expect(second.reset).toBe(false);
+	expect(second.record?.entries.some(entry => entry.data.text === "appended durable tail")).toBe(true);
+	expect(second.watermark.entryCount).toBe(321);
+	expect(second.stable).toBe(false);
+	expect((await observer.poll()).stable).toBe(true);
+});
+
+test("observer rejects consumed-byte rewrite combined with same-inode growth", async () => {
+	const encoder = new TextEncoder();
+	const header = `${sessionTranscript("observer-growth-rewrite", "/tmp/growth-rewrite", "Growth rewrite")}\n`;
+	const prefix = `${line({
+		type: "message",
+		id: "prefix-entry",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "prefix" },
+		padding: "x".repeat(6_000),
+	})}\n`;
+	const base = `${header}${prefix}${line({
+		type: "message",
+		id: "base-entry",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "original" },
+	})}\n`;
+	expect(base.indexOf("original")).toBeGreaterThan(4 * 1024);
+	const tailA = `${line({
+		type: "message",
+		id: "tail-a",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "tail a" },
+	})}\n`;
+	const tailB = `${line({
+		type: "message",
+		id: "tail-b",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "tail b" },
+	})}\n`;
+	const baseBytes = encoder.encode(base);
+	const state = mutableObserverFsState(baseBytes);
+	const observer = new SessionTranscriptObserver("/tmp/growth-rewrite.jsonl", host, state.fs);
+	expect((await observer.poll()).watermark.entryCount).toBe(2);
+	expect((await observer.poll()).stable).toBe(true);
+
+	const visible = encoder.encode(base + tailA);
+	state.setContent(visible);
+	const originalRange = state.fs.readFileRange;
+	let raced = false;
+	state.fs.readFileRange = async (path, offset, maxBytes, expectedIdentity) => {
+		const result = await originalRange(path, offset, maxBytes, expectedIdentity);
+		if (!raced) {
+			raced = true;
+			const rewritten = visible.slice();
+			rewritten.set(encoder.encode("replaced"), base.indexOf("original"));
+			state.setContent(new Uint8Array([...rewritten, ...encoder.encode(tailB)]), { touch: true });
+		}
+		return result;
+	};
+
+	const failed = await observer.poll();
+	expect(failed.transcript).toBe("snapshot");
+	expect(failed.record?.entries.map(entry => entry.data.text)).toEqual(["prefix", "original"]);
+	const recovered = await observer.poll();
+	expect(recovered.reset).toBe(true);
+	expect(recovered.record?.entries.map(entry => entry.data.text)).toEqual(["prefix", "replaced", "tail a", "tail b"]);
+});
+
+test("observer rejects an old consumed rewrite before poll while same-inode growth is visible", async () => {
+	const encoder = new TextEncoder();
+	const header = `${sessionTranscript("observer-growth-rewrite-before-poll", "/tmp/growth-rewrite-before-poll", "Growth rewrite")}\n`;
+	const prefix = `${line({
+		type: "message",
+		id: "prefix-entry",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "prefix" },
+		padding: "x".repeat(6_000),
+	})}\n`;
+	const base = `${header}${prefix}${line({
+		type: "message",
+		id: "base-entry",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "original" },
+	})}\n`;
+	expect(base.indexOf("original")).toBeGreaterThan(4 * 1024);
+	const tailA = `${line({
+		type: "message",
+		id: "tail-a",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "tail a" },
+	})}\n`;
+	const tailB = `${line({
+		type: "message",
+		id: "tail-b",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "tail b" },
+	})}\n`;
+	const baseBytes = encoder.encode(base);
+	const state = mutableObserverFsState(baseBytes);
+	const observer = new SessionTranscriptObserver("/tmp/growth-rewrite-before-poll.jsonl", host, state.fs);
+	expect((await observer.poll()).record?.entries.map(entry => entry.data.text)).toEqual(["prefix", "original"]);
+	expect((await observer.poll()).stable).toBe(true);
+
+	const visible = encoder.encode(base + tailA);
+	state.setContent(visible);
+	const rewritten = visible.slice();
+	rewritten.set(encoder.encode("replaced"), base.indexOf("original"));
+	state.setContent(new Uint8Array([...rewritten, ...encoder.encode(tailB)]), { touch: true });
+
+	const failed = await observer.poll();
+	expect(failed.transcript).toBe("snapshot");
+	expect(failed.reset).toBe(false);
+	expect(failed.record?.entries.map(entry => entry.data.text)).toEqual(["prefix", "original"]);
+	const recovered = await observer.poll();
+	expect(recovered.reset).toBe(true);
+	expect(recovered.record?.entries.map(entry => entry.data.text)).toEqual(["prefix", "replaced", "tail a", "tail b"]);
+});
+
+test("observer rejects read-range rewrite combined with same-inode growth", async () => {
+	const encoder = new TextEncoder();
+	const header = `${sessionTranscript("observer-range-rewrite", "/tmp/range-rewrite", "Range rewrite")}\n`;
+	const base = `${header}${line({
+		type: "message",
+		id: "base-entry",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "base" },
+	})}\n`;
+	const tailA = `${line({
+		type: "message",
+		id: "tail-a",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "tail a" },
+	})}\n`;
+	const tailB = `${line({
+		type: "message",
+		id: "tail-b",
+		parentId: null,
+		timestamp: stamp,
+		message: { role: "user", content: "tail b" },
+	})}\n`;
+	const baseBytes = encoder.encode(base);
+	const state = mutableObserverFsState(baseBytes);
+	const observer = new SessionTranscriptObserver("/tmp/range-rewrite.jsonl", host, state.fs);
+	expect((await observer.poll()).watermark.entryCount).toBe(1);
+	expect((await observer.poll()).stable).toBe(true);
+
+	const visible = encoder.encode(base + tailA);
+	state.setContent(visible);
+	const originalRange = state.fs.readFileRange;
+	let raced = false;
+	state.fs.readFileRange = async (path, offset, maxBytes, expectedIdentity) => {
+		const result = await originalRange(path, offset, maxBytes, expectedIdentity);
+		if (!raced && offset === baseBytes.byteLength) {
+			raced = true;
+			const rewritten = visible.slice();
+			rewritten.set(encoder.encode("tail x"), (base + tailA).indexOf("tail a"));
+			state.setContent(new Uint8Array([...rewritten, ...encoder.encode(tailB)]), { touch: true });
+		}
+		return result;
+	};
+
+	const failed = await observer.poll();
+	expect(failed.transcript).toBe("snapshot");
+	expect(failed.record?.entries.map(entry => entry.data.text)).toEqual(["base"]);
+	const recovered = await observer.poll();
+	expect(recovered.reset).toBe(true);
+	expect(recovered.record?.entries.map(entry => entry.data.text)).toEqual(["base", "tail x", "tail b"]);
+});
+
 test("live projector resolves a result that arrives before its tool call", () => {
 	const projector = new SessionEntryProjector(host, sessionId("pending-before-call"), "live");
 	projector.project({
@@ -1499,6 +1713,46 @@ test("follower keeps a partial final JSONL record out of projection until newlin
 	const complete = await observer.poll();
 	expect(complete.watermark).toEqual({ entryCount: 1, lastEntryId: "final-entry" });
 	expect(complete.entries.map(value => value.data.text)).toEqual(["durable after newline"]);
+});
+test("observer follows a partial record to durable catch-up without resetting or duplicating", async () => {
+	const encoder = new TextEncoder();
+	const header = `${sessionTranscript("observer-follow", "/tmp/follow", "Follow")}\n`;
+	const makeEntry = (id: string, text: string) =>
+		line({
+			type: "message",
+			id,
+			parentId: null,
+			timestamp: stamp,
+			message: { role: "user", content: text },
+		});
+	const first = makeEntry("follow-first", "first durable");
+	const second = makeEntry("follow-second", "second durable");
+	const third = makeEntry("follow-third", "third durable");
+	const state = observerFsState(encoder.encode(header));
+	const observer = new SessionTranscriptObserver("/tmp/follow.jsonl", host, state.fs);
+
+	const initial = await observer.poll();
+	expect(initial.watermark).toEqual({ entryCount: 0, lastEntryId: null });
+	expect(initial.entries).toEqual([]);
+
+	state.setContent(encoder.encode(header + first));
+	const partial = await observer.poll();
+	expect(partial.watermark).toEqual({ entryCount: 0, lastEntryId: null });
+	expect(partial.entries).toEqual([]);
+
+	state.setContent(encoder.encode(`${header + first}\n`));
+	const completed = await observer.poll();
+	expect(completed.reset).toBe(false);
+	expect(completed.watermark).toEqual({ entryCount: 1, lastEntryId: "follow-first" });
+	expect(completed.entries.map(entry => entry.id)).toEqual([entryId("follow-first")]);
+
+	state.setContent(encoder.encode(`${header + first}\n${second}\n${third}\n`));
+	const caughtUp = await observer.poll();
+	expect(caughtUp.reset).toBe(false);
+	expect(caughtUp.watermark).toEqual({ entryCount: 3, lastEntryId: "follow-third" });
+	expect(caughtUp.watermark.entryCount).toBeGreaterThan(completed.watermark.entryCount);
+	expect(caughtUp.entries.map(entry => entry.id)).toEqual([entryId("follow-second"), entryId("follow-third")]);
+	expect(caughtUp.entries.map(entry => entry.data.text)).toEqual(["second durable", "third durable"]);
 });
 
 test("follower carries a partial UTF-8 code point across reads without replacement text", async () => {
