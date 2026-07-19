@@ -67,11 +67,10 @@ export class AttentionOutcomeStore {
 		let metadata: Awaited<ReturnType<typeof fs.lstat>>;
 		try {
 			metadata = await fs.lstat(this.path);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-			throw error;
+		} catch {
+			return;
 		}
-		if (!metadata.isFile() || (metadata.mode & 0o077) !== 0 || metadata.size > MAX_LEDGER_BYTES) return;
+		if (!metadata.isFile() || (metadata.mode & 0o777) !== 0o600 || metadata.size > MAX_LEDGER_BYTES) return;
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(await Bun.file(this.path).text()) as unknown;

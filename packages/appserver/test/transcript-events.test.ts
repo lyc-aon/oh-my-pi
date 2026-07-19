@@ -826,7 +826,8 @@ describe("appserver transcript event translator", () => {
 			message: {
 				role: "assistant",
 				stopReason: "error",
-				errorMessage: "Bearer abcdefghijklmnop failed at /home/tester/private token=plaintext",
+				errorMessage:
+					"Bearer abcdefghijklmnop failed at /home/tester/private token=plaintext https://signed.example/download?signature=url-secret",
 				errorStatus: 503,
 				errorId: 12,
 			},
@@ -836,6 +837,8 @@ describe("appserver transcript event translator", () => {
 		expect(JSON.stringify(error)).not.toContain("abcdefghijklmnop");
 		expect(JSON.stringify(error)).not.toContain("/home/tester");
 		expect(JSON.stringify(error)).not.toContain("plaintext");
+		expect(JSON.stringify(error)).not.toContain("signed.example");
+		expect(JSON.stringify(error)).not.toContain("url-secret");
 
 		const nonAuthoritative = translator.translate({
 			type: "turn_end",
@@ -885,12 +888,12 @@ describe("appserver transcript event translator", () => {
 		const earlyFailure = translator.translate({
 			type: "prompt_result",
 			id: "early",
-			error: "Bearer abcdefghijklmnop failed at /home/tester/private token=plaintext",
+			error: "Bearer abcdefghijklmnop failed at /home/tester/private token=plaintext https://signed.example/download?signature=url-secret",
 		});
 		expect(earlyFailure).toEqual([
 			{
 				type: "turn.error",
-				message: "Bearer [redacted] failed at [path] token=[redacted]",
+				message: "Bearer [redacted] failed at [path] token=[redacted] [url]",
 				at: new Date(99).toISOString(),
 			},
 		]);

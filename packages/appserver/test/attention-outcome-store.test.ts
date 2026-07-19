@@ -35,4 +35,30 @@ describe("private attention outcome ledger", () => {
 		expect(JSON.parse(await Bun.file(ledgerPath).text())).toEqual({ version: 1, outcomes: [] });
 		await fs.rm(root, { recursive: true, force: true });
 	});
+	test("ignores ledgers without exact owner-only permissions", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-attention-ledger-mode-"));
+		const ledgerPath = path.join(root, "attention-outcomes.json");
+		const outcome = {
+			id: "agent:completed:2026-07-18T12:00:00.000Z",
+			kind: "completed" as const,
+			at: "2026-07-18T12:00:00.000Z",
+			summary: "Agent completed work.",
+		};
+		await fs.writeFile(
+			ledgerPath,
+			`${JSON.stringify({ version: 1, outcomes: [{ sessionId: "session-a", outcome }] })}\n`,
+			{ mode: 0o700 },
+		);
+		await fs.chmod(ledgerPath, 0o700);
+
+		const store = new AttentionOutcomeStore(ledgerPath);
+		await store.load();
+		expect(store.get(sessionId("session-a"))).toBeUndefined();
+		await fs.rm(root, { recursive: true, force: true });
+	});
+	test("treats ledger access failures as an empty best-effort cache", async () => {
+		const store = new AttentionOutcomeStore("invalid\0attention-outcomes.json");
+		await expect(store.load()).resolves.toBeUndefined();
+		expect(store.get(sessionId("session-a"))).toBeUndefined();
+	});
 });

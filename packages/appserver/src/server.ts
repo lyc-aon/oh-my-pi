@@ -86,7 +86,12 @@ import { BunRemoteListener, createListenerPlan, createServeProxyPlan } from "./r
 import type { RemoteConnection, RemoteListenerConfig } from "./remote/types.ts";
 import { BunRpcChildFactory, RpcChildSupervisor } from "./rpc-child.ts";
 import { SubagentProjection, subagentIdFromFrame } from "./subagent-projection.ts";
-import { type AppserverEvent, asAppWireEvent, TranscriptEventTranslator } from "./transcript-events.ts";
+import {
+	type AppserverEvent,
+	asAppWireEvent,
+	safeAttentionDisplay,
+	TranscriptEventTranslator,
+} from "./transcript-events.ts";
 import { TranscriptImageError, TranscriptImageReader } from "./transcript-image-reader.ts";
 import type {
 	AppserverDrainBusy,
@@ -912,7 +917,7 @@ export class LocalAppserver implements AppserverHandle {
 			this.#agentTranscripts.clear();
 			await Promise.allSettled([...this.#startPromises.values()]);
 			this.#startPromises.clear();
-			await this.#attentionOutcomes?.flush();
+			await this.#attentionOutcomes?.flush().catch(() => undefined);
 			this.#started = false;
 			const identity = this.#runIdentity;
 			if (identity) await this.cleanupOwned(identity);
@@ -2357,7 +2362,7 @@ export class LocalAppserver implements AppserverHandle {
 				id: `turn:failed:${event.at}`,
 				kind: "failed",
 				at: event.at,
-				summary: event.message,
+				summary: safeAttentionDisplay(event.message, 1_024, "The turn stopped with an error."),
 			};
 			frame = projection.settleAttentionOutcome(outcome);
 			this.#persistAttentionOutcome(sessionId, outcome);

@@ -306,7 +306,7 @@ function safeOptionalDisplay(value: unknown, limit = MAX_EVENT_LABEL_BYTES): str
 	const output = safeDisplay(value, limit);
 	return output.length > 0 ? output : undefined;
 }
-function safeAttentionDisplay(value: unknown, limit: number, fallback: string): string {
+export function safeAttentionDisplay(value: unknown, limit: number, fallback: string): string {
 	const withoutUrls = typeof value === "string" ? value.replace(/\bhttps?:\/\/[^\s]+/giu, "[url]") : value;
 	const safe = safeDisplay(withoutUrls, limit);
 	return safe || fallback;
@@ -411,7 +411,7 @@ function turnErrorEvent(
 	if (message.role !== "assistant" || message.stopReason !== "error") return undefined;
 	const output: Extract<TranscriptEvent, { type: "turn.error" }> = {
 		type: "turn.error",
-		message: safeOptionalDisplay(message.errorMessage, 1_024) ?? "The turn stopped with an error.",
+		message: safeAttentionDisplay(message.errorMessage, 1_024, "The turn stopped with an error."),
 		at,
 	};
 	const errorStatus = optionalSafeInteger(message.errorStatus, 999);
@@ -695,7 +695,7 @@ export class TranscriptEventTranslator {
 		const at = this.#nowIso();
 		const error: Extract<TranscriptEvent, { type: "turn.error" }> = {
 			type: "turn.error",
-			message: safeOptionalDisplay(frame.error, 1_024) ?? "The prompt stopped with an error.",
+			message: safeAttentionDisplay(frame.error, 1_024, "The prompt stopped with an error."),
 			at,
 		};
 		if (this.#turnAt === undefined) return [error];

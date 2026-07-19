@@ -2774,7 +2774,7 @@ describe("live Unix websocket protocol", () => {
 		child.push({
 			type: "prompt_result",
 			id: prompt.id,
-			error: "Bearer abcdefghijklmnop failed at /home/tester/private token=plaintext",
+			error: "Bearer abcdefghijklmnop failed at /home/tester/private token=plaintext https://signed.example/download?signature=url-secret",
 		});
 		const terminalState = await waitForRpcWriteId(child, "get_state", `${prompt.id}:terminal:state`);
 		respondState(child, terminalState.frame);
@@ -2782,11 +2782,18 @@ describe("live Unix websocket protocol", () => {
 		const failure = terminal.frames.find(frame => frame.type === "event" && frame.event.type === "turn.error");
 		expect(failure).toMatchObject({
 			type: "event",
-			event: { type: "turn.error", message: "Bearer [redacted] failed at [path] token=[redacted]" },
+			event: { type: "turn.error", message: "Bearer [redacted] failed at [path] token=[redacted] [url]" },
 		});
 		expect(JSON.stringify(terminal.frames)).not.toContain("abcdefghijklmnop");
 		expect(JSON.stringify(terminal.frames)).not.toContain("/home/tester");
 		expect(JSON.stringify(terminal.frames)).not.toContain("plaintext");
+		expect(JSON.stringify(terminal.frames)).not.toContain("signed.example");
+		expect(JSON.stringify(terminal.frames)).not.toContain("url-secret");
+		expect(appserver.snapshot(sid("s1"))?.ref.attention?.latestOutcome?.summary).toBe(
+			"Bearer [redacted] failed at [path] token=[redacted] [url]",
+		);
+		expect(appserver.snapshot(sid("s1"))?.ref.attention?.latestOutcome?.summary).not.toContain("signed.example");
+		expect(appserver.snapshot(sid("s1"))?.ref.attention?.latestOutcome?.summary).not.toContain("url-secret");
 		expect(appserver.snapshot(sid("s1"))?.ref.status).toBe("idle");
 
 		client.client.sendJson({ v: "omp-app/1", type: "ping", nonce: "after-prompt-error", timestamp: stamp });
