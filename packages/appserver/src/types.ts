@@ -157,6 +157,8 @@ export interface AppserverOptions {
 	hostId?: HostId;
 	/** Persistent host identity path. Omitted to preserve the default OMP identity location. */
 	hostIdPath?: string;
+	/** Private latest-outcome ledger path. Explicit host embedders opt in by providing this path. */
+	attentionOutcomePath?: string;
 	epoch?: string;
 	clock?: Clock;
 	discovery?: SessionDiscovery;

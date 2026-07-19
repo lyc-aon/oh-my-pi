@@ -505,11 +505,33 @@ describe("appserver transcript event translator", () => {
 			at: "1970-01-01T00:00:00.099Z",
 		});
 		expect(translator.pendingUiRequests()).toEqual([
-			{ id: "ask-1", kind: "ask" },
-			{ id: "ask-2", kind: "ask" },
-			{ id: "approval-1", kind: "approval" },
+			{
+				id: "ask-1",
+				kind: "ask",
+				attention: {
+					kind: "question",
+					id: "ask-1",
+					question: "Pick",
+					options: [
+						{ id: "one", label: "one" },
+						{ id: "two", label: "two" },
+					],
+					allowText: false,
+					requestedAt: "1970-01-01T00:00:00.099Z",
+				},
+			},
+			{ id: "ask-2", kind: "ask", attention: expect.objectContaining({ kind: "question", id: "ask-2" }) },
+			{
+				id: "approval-1",
+				kind: "approval",
+				attention: expect.objectContaining({ kind: "approval", id: "approval-1" }),
+			},
 		]);
-		expect(translator.pendingUiRequest("ask-1")).toEqual({ id: "ask-1", kind: "ask" });
+		expect(translator.pendingUiRequest("ask-1")).toMatchObject({
+			id: "ask-1",
+			kind: "ask",
+			attention: { kind: "question", question: "Pick" },
+		});
 		expect(translator.resolveUiRequest("ask-1")).toEqual({
 			type: "ask.resolved",
 			askId: "ask-1",
@@ -526,6 +548,22 @@ describe("appserver transcript event translator", () => {
 		).toMatchObject([{ type: "approval.resolved", approvalId: "approval-1", at: "1970-01-01T00:00:00.099Z" }]);
 		expect(
 			translator.translate({ type: "extension_ui_request", id: "notify-1", method: "notify", message: "ignored" }),
+		).toEqual([]);
+		const bounded = new TranscriptEventTranslator(() => 99);
+		bounded.translate({
+			type: "extension_ui_request",
+			id: "bounded-ask",
+			method: "select",
+			title: "Use token=secret at https://example.test/private from /Users/name/project",
+			options: Array.from({ length: 40 }, (_, index) => `option-${index}`),
+		});
+		const boundedAttention = bounded.pendingUiRequest("bounded-ask")?.attention;
+		expect(boundedAttention).toMatchObject({
+			question: "Use token=[redacted] at [url] from [path]",
+		});
+		expect(boundedAttention?.kind === "question" ? boundedAttention.options : []).toHaveLength(32);
+		expect(
+			bounded.translate({ type: "extension_ui_request", id: "x".repeat(257), method: "input", title: "ignored" }),
 		).toEqual([]);
 	});
 	test("falls back instead of throwing for timestamps outside the Date range", () => {
