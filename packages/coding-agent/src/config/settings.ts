@@ -76,7 +76,7 @@ export interface SettingsDesktopSnapshot {
 export interface SettingsOptions {
 	/** Current working directory for project settings discovery */
 	cwd?: string;
-	/** Skip project capability discovery during the initial load (host daemons only) */
+	/** Load project settings during initialization by default; set false for host daemons to skip discovery */
 	loadProjectSettings?: boolean;
 	/** Agent directory for config.yml/config.yaml storage */
 	agentDir?: string;
