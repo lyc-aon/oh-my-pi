@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added optional realtime sonification for streamed assistant, thinking, tool-input, and tool-output activity, with distinct semantic voices, success/failure accents, five presets, token/delta/word mapping, rate response controls, queue saturation telemetry, settings integration, and deterministic `/sonify demo` auditions.
+
+### Changed
+
+- Changed default `sonification.source` from `assistant` to `all` so thinking and tool activity are sonified alongside assistant output.
+
 ## [17.0.5] - 2026-07-18
 
 ### Added

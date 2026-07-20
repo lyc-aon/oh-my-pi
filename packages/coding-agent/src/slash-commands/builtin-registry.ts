@@ -35,6 +35,12 @@ import type { AgentSession, FreshSessionResult } from "../session/agent-session"
 import { COMPACT_MODES, parseCompactArgs } from "../session/compact-modes";
 import { resolveResumableSession } from "../session/session-listing";
 import { formatShakeSummary, type ShakeMode } from "../session/shake-types";
+import {
+	isSonificationPreset,
+	SONIFICATION_PRESETS,
+	type SonificationPresetName,
+	tokenSonifier,
+} from "../sonification";
 import { expandTilde, resolveToCwd } from "../tools/path-utils";
 import { urlHyperlinkAlways } from "../tui";
 import {
@@ -203,12 +209,115 @@ function parseShakeMode(args: string): ShakeMode | { error: string } {
 	return { error: `Unknown /shake mode "${verb}". Use elide or images.` };
 }
 
+function formatSonificationStatus(): string {
+	const status = tokenSonifier.status();
+	const enabled = settings.get("sonification.enabled");
+	const preset = settings.get("sonification.preset");
+	const granularity = settings.get("sonification.granularity");
+	const source = settings.get("sonification.source");
+	const volume = Math.round(settings.get("sonification.volume") * 100);
+	const device = status.running ? `${status.sampleRate} Hz, ${status.channels} ch` : status.error || "idle";
+	const traffic = `${status.acceptedBatches} accepted, ${status.droppedPulses} pulses dropped, peak ${status.peakSchedulerOccupancy} scheduled batches`;
+	return `Sonification ${enabled ? "on" : "off"} · ${preset} · ${granularity} · ${source} · ${volume}% · ${device} · ${traffic}`;
+}
+
+function selectSonificationPreset(preset: SonificationPresetName): string {
+	settings.set("sonification.preset", preset);
+	settings.set("sonification.enabled", true);
+	const status = tokenSonifier.refresh(true);
+	return status.running
+		? formatSonificationStatus()
+		: `Sonification unavailable: ${status.error ?? "no output device"}`;
+}
+
+function handleSonifyArgs(rawArgs: string): string {
+	const args = rawArgs.trim().toLowerCase();
+	if (!args || args === "on") {
+		settings.set("sonification.enabled", true);
+		const status = tokenSonifier.refresh(true);
+		return status.running
+			? formatSonificationStatus()
+			: `Sonification unavailable: ${status.error ?? "no output device"}`;
+	}
+	if (args === "off") {
+		settings.set("sonification.enabled", false);
+		tokenSonifier.refresh();
+		return formatSonificationStatus();
+	}
+	if (args === "status") return formatSonificationStatus();
+	if (args === "next") {
+		const current = settings.get("sonification.preset");
+		const nextIndex = (SONIFICATION_PRESETS.indexOf(current) + 1) % SONIFICATION_PRESETS.length;
+		return selectSonificationPreset(SONIFICATION_PRESETS[nextIndex]);
+	}
+	if (args === "preview" || args.startsWith("preview ")) {
+		const requested = args.slice("preview".length).trim();
+		let preset = settings.get("sonification.preset");
+		if (requested) {
+			if (!isSonificationPreset(requested)) {
+				return `Unknown preset "${requested}". Use ${SONIFICATION_PRESETS.join(", ")}.`;
+			}
+			preset = requested;
+			settings.set("sonification.preset", preset);
+		}
+		const status = tokenSonifier.preview(preset);
+		return status.running
+			? `Previewing ${preset}`
+			: `Sonification unavailable: ${status.error ?? "no output device"}`;
+	}
+	if (args === "demo" || args.startsWith("demo ")) {
+		const requested = args.slice("demo".length).trim();
+		let preset: SonificationPresetName | "all" = settings.get("sonification.preset");
+		if (requested) {
+			if (requested !== "all" && !isSonificationPreset(requested)) {
+				return `Unknown preset "${requested}". Use ${SONIFICATION_PRESETS.join(", ")}, or all.`;
+			}
+			preset = requested;
+			if (preset !== "all") settings.set("sonification.preset", preset);
+		}
+		const status = tokenSonifier.demo(preset);
+		return status.running
+			? `Auditioning ${preset === "all" ? "all presets" : preset} · ${formatSonificationStatus()}`
+			: `Sonification unavailable: ${status.error ?? "no output device"}`;
+	}
+	if (isSonificationPreset(args)) return selectSonificationPreset(args);
+	return `Usage: /sonify [on|off|status|next|preview [preset]|demo [preset|all]|${SONIFICATION_PRESETS.join("|")}]`;
+}
+
 const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 	{
 		name: "settings",
 		description: "Open settings menu",
 		handleTui: (_command, runtime) => {
 			runtime.ctx.showSettingsSelector();
+			runtime.ctx.editor.setText("");
+		},
+	},
+	{
+		name: "sonify",
+		description: "Sonify streamed output with switchable realtime audio presets",
+		allowArgs: true,
+		inlineHint: "[preset|next|preview|demo|status|off]",
+		subcommands: [
+			{ name: "on", description: "Enable sonification and preview the current preset" },
+			{ name: "off", description: "Stop sonification and release the output device" },
+			{ name: "status", description: "Show configuration and queue saturation telemetry" },
+			{ name: "next", description: "Select and preview the next preset" },
+			{ name: "preview", description: "Select and preview a preset", usage: "[preset]" },
+			{ name: "demo", description: "Audition a deterministic mixed-stream trace", usage: "[preset|all]" },
+			...SONIFICATION_PRESETS.map(preset => ({
+				name: preset,
+				description: `Select and preview the ${preset} preset`,
+			})),
+		],
+		getTuiAutocompleteDescription: () => formatSonificationStatus(),
+		handleTui: (command, runtime) => {
+			const message = handleSonifyArgs(command.args);
+			if (message.startsWith("Usage:") || message.startsWith("Unknown preset")) {
+				runtime.ctx.showWarning(message);
+			} else {
+				runtime.ctx.showStatus(message);
+			}
 			runtime.ctx.editor.setText("");
 		},
 	},

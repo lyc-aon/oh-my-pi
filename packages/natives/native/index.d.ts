@@ -133,6 +133,26 @@ export declare class Shell {
   liveBackgroundJobCount(): Promise<number>
 }
 
+/** In-process real-time audio engine for token sonification. */
+export declare class TokenAudioEngine {
+  constructor()
+  /** Start the default output stream, or update an already-running stream. */
+  start(config: TokenAudioConfig): TokenAudioStatus
+  /** Update the live DSP configuration without recreating the device stream. */
+  configure(config: TokenAudioConfig): void
+  /** Queue evenly spaced token pulses over a native-clock time span. */
+  enqueuePulseBatch(count: number, spanMs: number, observedRate: number, voice: SonificationVoice): void
+  /** Queue a slow, medium, then dense audible preview for one preset. */
+  preview(preset: SonificationPreset): number
+  /** Queue a deterministic mixed-stream audition trace for one preset. */
+  demo(preset: SonificationPreset): number
+  /** Cancel queued and sounding pulses. Repeated calls are harmless. */
+  clear(): void
+  /** Drop the output stream. Repeated calls are harmless. */
+  stop(): void
+  status(): TokenAudioStatus
+}
+
 /**
  * Install the bounded Tokio runtime napi-rs adopts for async exports and the
  * bounded Rayon global pool used by native parallel iterators.
@@ -1530,6 +1550,35 @@ export interface SnapcompactRenderOptions {
  */
 export declare function snapcompactSupportedChars(font: string, chars: string): string
 
+/** Audible texture used for token activity. */
+export declare enum SonificationPreset {
+  Rotary = 'rotary',
+  Geiger = 'geiger',
+  Mechanical = 'mechanical',
+  Synth = 'synth',
+  Rain = 'rain'
+}
+
+/** How strongly the observed token rate changes pulse density. */
+export declare enum SonificationRateResponse {
+  Fixed = 'fixed',
+  Subtle = 'subtle',
+  Strong = 'strong'
+}
+
+/**
+ * Semantic stream lane used to give queued pulses a stable source-specific
+ * voice.
+ */
+export declare enum SonificationVoice {
+  Assistant = 'assistant',
+  Thinking = 'thinking',
+  ToolInput = 'tool-input',
+  ToolOutput = 'tool-output',
+  ToolSuccess = 'tool-success',
+  ToolError = 'tool-error'
+}
+
 export declare function summarizeCode(options: SummaryOptions): SummaryResult
 
 export interface SummaryOptions {
@@ -1585,6 +1634,26 @@ export interface SummarySegment {
  * mapping.
  */
 export declare function supportsLanguage(lang: string): boolean
+
+/** Runtime configuration for [`TokenAudioEngine`]. */
+export interface TokenAudioConfig {
+  preset: SonificationPreset
+  volume: number
+  rateResponse: SonificationRateResponse
+}
+
+/** Current output-stream state. */
+export interface TokenAudioStatus {
+  running: boolean
+  sampleRate: number
+  channels: number
+  error?: string
+  acceptedBatches: number
+  droppedCommandBatches: number
+  droppedSchedulerBatches: number
+  droppedPulses: number
+  peakSchedulerOccupancy: number
+}
 
 /**
  * Truncate text to a visible width, preserving ANSI codes.

@@ -165,11 +165,14 @@ export function resolveLoaderCandidates({
 		path.join(userDataDir, filename),
 	]);
 	const stagedCandidates = stageFromNodeModules ? addonFilenames.map(filename => path.join(versionedDir, filename)) : [];
+	const workspaceLoad = !nativeDir.includes("/node_modules/") && !nativeDir.includes("\\node_modules\\");
 	let releaseCandidates;
 	if (isCompiledBinary) {
 		releaseCandidates = [...compiledCandidates, ...baseReleaseCandidates];
 	} else if (stageFromNodeModules) {
 		releaseCandidates = [...stagedCandidates, ...leafCandidates, ...baseReleaseCandidates];
+	} else if (workspaceLoad) {
+		releaseCandidates = [...baseReleaseCandidates, ...leafCandidates];
 	} else {
 		releaseCandidates = [...leafCandidates, ...baseReleaseCandidates];
 	}

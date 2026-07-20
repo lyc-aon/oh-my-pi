@@ -24,6 +24,11 @@
 
 pub mod appearance;
 pub mod ast;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub mod audio;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[path = "audio/stub.rs"]
+pub mod audio;
 pub mod block;
 pub mod clipboard;
 pub mod crash_handler;

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a realtime in-process token-audio engine with five switchable synthesis presets, six batch-scoped semantic voices, bounded pulse scheduling, deterministic mixed-stream demos, and queue saturation telemetry.
+
+### Fixed
+
+- Fixed workspace development builds loading the installed platform addon before a freshly built local addon.
+
 ## [17.0.5] - 2026-07-18
 
 ### Added

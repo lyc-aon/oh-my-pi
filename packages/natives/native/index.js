@@ -21,6 +21,7 @@ export const MacOSPowerAssertion = nativeBindings.MacOSPowerAssertion;
 export const Process = nativeBindings.Process;
 export const PtySession = nativeBindings.PtySession;
 export const Shell = nativeBindings.Shell;
+export const TokenAudioEngine = nativeBindings.TokenAudioEngine;
 
 // functions
 export const __ompInstallTokioRuntime = nativeBindings.__ompInstallTokioRuntime;
@@ -125,5 +126,25 @@ export const MacOSAppearance = {
 export const ProcessStatus = {
 	Running: "running",
 	Exited: "exited",
+};
+export const SonificationPreset = {
+	Rotary: "rotary",
+	Geiger: "geiger",
+	Mechanical: "mechanical",
+	Synth: "synth",
+	Rain: "rain",
+};
+export const SonificationRateResponse = {
+	Fixed: "fixed",
+	Subtle: "subtle",
+	Strong: "strong",
+};
+export const SonificationVoice = {
+	Assistant: "assistant",
+	Thinking: "thinking",
+	ToolInput: "tool-input",
+	ToolOutput: "tool-output",
+	ToolSuccess: "tool-success",
+	ToolError: "tool-error",
 };
 // --- end generated native exports ---

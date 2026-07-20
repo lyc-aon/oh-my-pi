@@ -17,6 +17,7 @@ import { EventController } from "@oh-my-pi/pi-coding-agent/modes/controllers/eve
 import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import type { AgentSessionEvent } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+import { tokenSonifier } from "../src/sonification";
 
 function makeAssistantMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
 	return {
@@ -49,6 +50,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	resetSettingsForTest();
 });
 
@@ -355,6 +357,60 @@ describe("EventController working loader reconciliation", () => {
 		} as Extract<AgentSessionEvent, { type: "tool_execution_update" }>);
 
 		expect(ctx.ensureLoadingAnimation).not.toHaveBeenCalled();
+	});
+});
+
+describe("EventController sonification routing", () => {
+	it("scopes streamed content blocks to each assistant message", async () => {
+		const pushDelta = vi.spyOn(tokenSonifier, "pushDelta").mockImplementation(() => {});
+		const { controller } = createFixture();
+		const firstMessage = makeAssistantMessage({ timestamp: 100 });
+		const secondMessage = makeAssistantMessage({ timestamp: 200 });
+
+		for (const message of [firstMessage, secondMessage]) {
+			await controller.handleEvent({
+				type: "message_update",
+				message,
+				assistantMessageEvent: {
+					type: "toolcall_delta",
+					contentIndex: 3,
+					delta: '{"path":"src/',
+					partial: message,
+				},
+			} as Extract<AgentSessionEvent, { type: "message_update" }>);
+		}
+
+		expect(pushDelta).toHaveBeenNthCalledWith(1, '{"path":"src/', "tool-input", "100:3");
+		expect(pushDelta).toHaveBeenNthCalledWith(2, '{"path":"src/', "tool-input", "200:3");
+	});
+
+	it("routes growing tool snapshots and terminal failures to distinct sonifier operations", async () => {
+		const pushSnapshot = vi.spyOn(tokenSonifier, "pushToolOutputSnapshot").mockImplementation(() => {});
+		const finishOutput = vi.spyOn(tokenSonifier, "finishToolOutput").mockImplementation(() => {});
+		const { controller } = createFixture();
+
+		await controller.handleEvent({
+			type: "tool_execution_update",
+			toolCallId: "call-1",
+			toolName: "bash",
+			args: {},
+			partialResult: {
+				content: [
+					{ type: "text", text: "line 1" },
+					{ type: "text", text: "\nline 2" },
+				],
+			},
+		} as Extract<AgentSessionEvent, { type: "tool_execution_update" }>);
+		await controller.handleEvent({
+			type: "tool_execution_end",
+			toolCallId: "call-1",
+			toolName: "bash",
+			isError: true,
+			result: { content: [{ type: "text", text: "line 1\nline 2\nfailed" }], details: {} },
+		} as Extract<AgentSessionEvent, { type: "tool_execution_end" }>);
+
+		expect(pushSnapshot).toHaveBeenCalledWith("call-1", "line 1\nline 2");
+		expect(finishOutput).toHaveBeenCalledWith("call-1", "line 1\nline 2\nfailed", true);
 	});
 });
 

@@ -50,6 +50,7 @@ import {
 	type ResetUsageAccount,
 	toResetUsageAccounts,
 } from "../../slash-commands/helpers/reset-usage";
+import { tokenSonifier } from "../../sonification";
 import {
 	AUTO_THINKING,
 	type ConfiguredThinkingLevel,
@@ -439,6 +440,17 @@ export class SelectorController {
 
 			case "autocompleteMaxVisible":
 				this.ctx.editor.setAutocompleteMaxVisible(typeof value === "number" ? value : Number(value));
+				break;
+
+			case "sonification.enabled":
+			case "sonification.preset":
+			case "sonification.volume":
+			case "sonification.rateResponse":
+				tokenSonifier.refresh(true);
+				break;
+			case "sonification.granularity":
+			case "sonification.source":
+				tokenSonifier.clear();
 				break;
 
 			// Settings with UI side effects

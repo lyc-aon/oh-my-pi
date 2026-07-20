@@ -56,6 +56,10 @@ unicode-segmentation.workspace = true
 unicode-width.workspace = true
 xxhash-rust.workspace = true
 
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+cpal.workspace = true
+rtrb.workspace = true
+
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 

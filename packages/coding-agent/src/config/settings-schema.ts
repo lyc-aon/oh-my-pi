@@ -1955,6 +1955,102 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	// Stream sonification
+	"sonification.enabled": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "interaction",
+			group: "Speech",
+			label: "Token Sonification",
+			description: "Turn streamed assistant output into realtime audio pulses",
+		},
+	},
+	"sonification.preset": {
+		type: "enum",
+		values: ["rotary", "geiger", "mechanical", "synth", "rain"] as const,
+		default: "rotary",
+		ui: {
+			tab: "interaction",
+			group: "Speech",
+			label: "Sonification Preset",
+			description: "Sound used for streamed output pulses",
+			options: [
+				{ value: "rotary", label: "Rotary", description: "Dense band-limited mechanical chatter" },
+				{ value: "geiger", label: "Geiger", description: "Dry randomized detector cracks" },
+				{ value: "mechanical", label: "Mechanical", description: "Alternating click and clack resonators" },
+				{ value: "synth", label: "Synth", description: "Tonal chirps that react to output rate" },
+				{ value: "rain", label: "Rain", description: "Soft filtered-noise droplets" },
+			],
+		},
+	},
+	"sonification.granularity": {
+		type: "enum",
+		values: ["estimated-token", "delta", "word"] as const,
+		default: "estimated-token",
+		ui: {
+			tab: "interaction",
+			group: "Speech",
+			label: "Sonification Granularity",
+			description: "Map estimated tokens, provider deltas, or words to pulses",
+			options: [
+				{ value: "estimated-token", label: "Estimated Tokens" },
+				{ value: "delta", label: "Provider Deltas" },
+				{ value: "word", label: "Words" },
+			],
+		},
+	},
+	"sonification.source": {
+		type: "enum",
+		values: ["assistant", "thinking", "tools", "all"] as const,
+		default: "all",
+		ui: {
+			tab: "interaction",
+			group: "Speech",
+			label: "Sonification Source",
+			description: "Choose which streamed assistant, thinking, or tool activity produces pulses",
+			options: [
+				{ value: "assistant", label: "Assistant Text" },
+				{ value: "thinking", label: "Thinking" },
+				{ value: "tools", label: "Tool Activity" },
+				{ value: "all", label: "All Streams" },
+			],
+		},
+	},
+	"sonification.volume": {
+		type: "number",
+		default: 0.15,
+		ui: {
+			tab: "interaction",
+			group: "Speech",
+			label: "Sonification Volume",
+			description: "Master output level for token sounds",
+			options: [
+				{ value: "0.05", label: "5%" },
+				{ value: "0.1", label: "10%" },
+				{ value: "0.15", label: "15%", description: "Default" },
+				{ value: "0.25", label: "25%" },
+				{ value: "0.4", label: "40%" },
+			],
+		},
+	},
+	"sonification.rateResponse": {
+		type: "enum",
+		values: ["fixed", "subtle", "strong"] as const,
+		default: "subtle",
+		ui: {
+			tab: "interaction",
+			group: "Speech",
+			label: "Sonification Rate Response",
+			description: "How strongly output rate changes the sound",
+			options: [
+				{ value: "fixed", label: "Fixed" },
+				{ value: "subtle", label: "Subtle" },
+				{ value: "strong", label: "Strong" },
+			],
+		},
+	},
+
 	// ────────────────────────────────────────────────────────────────────────
 	// Context
 	// ────────────────────────────────────────────────────────────────────────

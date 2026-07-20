@@ -23,6 +23,7 @@ import type { InteractiveModeContext, TodoPhase } from "../../modes/types";
 import idleRecapPrompt from "../../prompts/system/recap-user.md" with { type: "text" };
 import type { AgentSessionEvent } from "../../session/agent-session";
 import { isSilentAbort, readQueueChipText, resolveAbortLabel } from "../../session/messages";
+import { tokenSonifier } from "../../sonification";
 import { previewLine, TRUNCATE_LENGTHS } from "../../tools/render-utils";
 import { PROPOSE_DEVICE_NAME, writeDeviceDispatch } from "../../tools/resolve";
 import { nextActionableTask } from "../../tools/todo";
@@ -63,6 +64,14 @@ function exposesRawPartialJson(toolName: string, rawInput: boolean, tool: unknow
 	if (RAW_PARTIAL_JSON_RENDERERS[toolName]) return true;
 	if (tool === null || typeof tool !== "object" || !("renderCall" in tool)) return false;
 	return typeof tool.renderCall === "function";
+}
+
+function toolResultText(result: { content?: Array<{ type: string; text?: string }> }): string {
+	let text = "";
+	for (const content of result.content ?? []) {
+		if (content.type === "text" && content.text) text += content.text;
+	}
+	return text;
 }
 
 type AgentSessionEventHandlers = {
@@ -198,6 +207,7 @@ export class EventController {
 	}
 
 	dispose(): void {
+		tokenSonifier.stop();
 		this.#streamingReveal.stop();
 		this.#toolArgsReveal.stop();
 		this.#cancelIdleCompaction();
@@ -644,9 +654,10 @@ export class EventController {
 		}
 	}
 
-	/** A new turn interrupts any speech still queued/playing from the previous one. */
+	/** A new turn interrupts queued speech and stale sonification pulses. */
 	#handleTurnStart(): void {
 		vocalizer.clear();
+		tokenSonifier.clear();
 	}
 
 	/**
@@ -663,6 +674,20 @@ export class EventController {
 			vocalizer.pushDelta(delta.delta);
 		} else if (delta.type === "thinking_delta" && mode === "all") {
 			vocalizer.pushDelta(delta.delta);
+		}
+	}
+
+	#sonifyDelta(event: Extract<AgentSessionEvent, { type: "message_update" }>): void {
+		const delta = event.assistantMessageEvent;
+		if (!delta) return;
+		if (delta.type === "start" || delta.type === "done" || delta.type === "error") return;
+		const blockId = `${event.message.timestamp}:${delta.contentIndex}`;
+		if (delta.type === "text_delta") {
+			tokenSonifier.pushDelta(delta.delta, "assistant", blockId);
+		} else if (delta.type === "thinking_delta") {
+			tokenSonifier.pushDelta(delta.delta, "thinking", blockId);
+		} else if (delta.type === "toolcall_delta") {
+			tokenSonifier.pushDelta(delta.delta, "tool-input", blockId);
 		}
 	}
 
@@ -686,6 +711,7 @@ export class EventController {
 	async #handleMessageUpdate(event: Extract<AgentSessionEvent, { type: "message_update" }>): Promise<void> {
 		this.#ensureWorkingLoaderWhileStreaming();
 		this.#vocalizeDelta(event);
+		this.#sonifyDelta(event);
 		if (this.ctx.streamingComponent && event.message.role === "assistant") {
 			const unlockedThinkingVisibility = this.ctx.noteDisplayableThinkingContent(event.message);
 			if (unlockedThinkingVisibility) {
@@ -842,6 +868,7 @@ export class EventController {
 				if (mode === "assistant" || mode === "all") vocalizer.flush();
 			}
 		}
+		if (event.message.role === "assistant" && event.message.stopReason === "aborted") tokenSonifier.clear();
 		if (this.ctx.streamingComponent && event.message.role === "assistant") {
 			this.ctx.streamingMessage = event.message;
 			this.#streamingReveal.stop();
@@ -1000,17 +1027,24 @@ export class EventController {
 	async #handleToolExecutionUpdate(
 		event: Extract<AgentSessionEvent, { type: "tool_execution_update" }>,
 	): Promise<void> {
+		const asyncState = (event.partialResult.details as { async?: { state?: string } } | undefined)?.async?.state;
+		const isFinalAsyncState = asyncState === "completed" || asyncState === "failed";
+		// A final async snapshot is terminal only for a parked background block.
+		const isTerminal = isFinalAsyncState && this.#backgroundTaskCallIds.has(event.toolCallId);
+		const outputText = toolResultText(event.partialResult);
+		if (isTerminal) {
+			tokenSonifier.finishToolOutput(event.toolCallId, outputText, asyncState === "failed");
+		} else {
+			tokenSonifier.pushToolOutputSnapshot(event.toolCallId, outputText);
+		}
 		this.#ensureWorkingLoaderWhileStreaming();
 		const component = this.ctx.pendingTools.get(event.toolCallId);
 		if (component) {
-			const asyncState = (event.partialResult.details as { async?: { state?: string } } | undefined)?.async?.state;
-			const isFinalAsyncState = asyncState === "completed" || asyncState === "failed";
 			// A final async snapshot is terminal only for a parked background
 			// block (the call already returned and was kept alive for its jobs).
 			// While the call is still executing — a mixed blocking+async task
 			// call whose jobs settle before its blocking subset — treat it as a
 			// partial frame: `tool_execution_end` still owns the terminal result.
-			const isTerminal = isFinalAsyncState && this.#backgroundTaskCallIds.has(event.toolCallId);
 			component.updateResult(
 				{ ...event.partialResult, isError: asyncState === "failed" },
 				!isTerminal,
@@ -1032,6 +1066,14 @@ export class EventController {
 		// which only fire `tool_execution_end`, never `_update` — do not leave
 		// the UI looking idle while the session keeps streaming (#3857).
 		this.#ensureWorkingLoaderWhileStreaming();
+		const asyncState = (event.result.details as { async?: { state?: string } } | undefined)?.async?.state;
+		const isBackgroundTask = event.toolName === "task" && asyncState === "running";
+		const outputText = toolResultText(event.result);
+		if (isBackgroundTask) {
+			tokenSonifier.pushToolOutputSnapshot(event.toolCallId, outputText);
+		} else {
+			tokenSonifier.finishToolOutput(event.toolCallId, outputText, event.isError === true);
+		}
 		if (event.toolName === "read") {
 			if (this.#inlineReadToolImages(event.toolCallId, event.result)) {
 				const component = this.ctx.pendingTools.get(event.toolCallId);
@@ -1060,8 +1102,6 @@ export class EventController {
 		} else {
 			const component = this.ctx.pendingTools.get(event.toolCallId);
 			if (component) {
-				const asyncState = (event.result.details as { async?: { state?: string } } | undefined)?.async?.state;
-				const isBackgroundTask = event.toolName === "task" && asyncState === "running";
 				component.updateResult({ ...event.result, isError: event.isError }, isBackgroundTask, event.toolCallId);
 				if (isBackgroundTask) {
 					this.#backgroundTaskCallIds.add(event.toolCallId);
