@@ -624,6 +624,18 @@ describe("child supervision", () => {
 			prefixArgv: ["/checkout/packages/coding-agent/src/cli.ts"],
 		});
 	});
+	test("embedded compiled entrypoints invoke the executable directly without an environment marker", () => {
+		expect(
+			resolveRpcChildInvocation({
+				executable: "/Applications/omp",
+				main: "/Applications/omp",
+				moduleUrl: "file:///$bunfs/root/packages/appserver/src/rpc-child.ts",
+			}),
+		).toEqual({
+			executable: "/Applications/omp",
+			prefixArgv: [],
+		});
+	});
 	test("startup uses exact argv and session path", async () => {
 		const factory = new IdleFactory();
 		const supervisor = new RpcChildSupervisor(

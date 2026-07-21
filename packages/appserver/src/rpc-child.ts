@@ -28,13 +28,20 @@ export interface RpcChildInvocationOverrides {
 	compiled?: boolean;
 	executable?: string;
 	main?: string;
+	moduleUrl?: string;
 }
 
 export function resolveRpcChildInvocation(overrides: RpcChildInvocationOverrides = {}): RpcChildInvocation {
 	const executable = overrides.executable ?? process.execPath;
 	if (typeof executable !== "string" || executable.trim().length === 0)
 		throw new Error("rpc child executable is empty");
-	const compiled = overrides.compiled ?? process.env.PI_COMPILED === "true";
+	const moduleUrl = overrides.moduleUrl ?? import.meta.url;
+	const compiled =
+		overrides.compiled ??
+		(process.env.PI_COMPILED === "true" ||
+			moduleUrl.includes("$bunfs") ||
+			moduleUrl.includes("~BUN") ||
+			moduleUrl.includes("%7EBUN"));
 	const runningMain = overrides.main ?? Bun.main;
 	const runningCodingAgentDaemon = typeof runningMain === "string" && runningMain.endsWith("/cli/ompd.ts");
 	const main = runningCodingAgentDaemon ? resolve(dirname(runningMain), "../cli.ts") : runningMain;
