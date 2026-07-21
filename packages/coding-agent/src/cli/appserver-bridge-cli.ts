@@ -136,6 +136,7 @@ function safeError(error: unknown): { code: string; message: string } {
 		FORBIDDEN: "operation is not permitted",
 		NOT_FOUND: "resource was not found",
 		OPERATION_FAILED: "operation failed",
+		RESPONSE_TOO_LARGE: "response exceeds bridge frame limit",
 		STALE_REVISION: "resource revision is stale",
 		UNSUPPORTED: "operation is unsupported",
 	};
@@ -288,11 +289,30 @@ export async function runOmpAuthorityBridge(options: OmpAuthorityBridgeRunnerOpt
 				process.stdout.write(line, error => (error ? reject(error) : resolve()));
 			}));
 	let writeTail = Promise.resolve();
+	// Encode can throw on oversized frames. Never let that become an unhandled rejection —
+	// a single fat discovery/event payload used to kill the entire bridge process.
 	const write = (frame: Parameters<typeof encodeOmpAuthorityBridgeFrame>[0]): Promise<void> => {
-		const line = encodeOmpAuthorityBridgeFrame(frame);
-		writeTail = writeTail.then(() => output(line));
+		let line: string;
+		try {
+			line = encodeOmpAuthorityBridgeFrame(frame);
+		} catch (error) {
+			return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+		}
+		writeTail = writeTail.then(() => output(line), () => output(line));
 		return writeTail;
 	};
+	const writeFailure = (id: string, error: unknown): Promise<void> =>
+		write({
+			v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+			type: "response",
+			id,
+			ok: false,
+			error: safeError(error),
+		}).catch(writeError => {
+			// Last resort: even the failure envelope failed to encode/write. Log and keep serving.
+			const message = writeError instanceof Error ? writeError.message : String(writeError);
+			process.stderr.write(`omp bridge: dropped failure response for ${id}: ${message}\n`);
+		});
 	const identity = options.identity ?? getCodingAgentAppserverIdentity();
 	const methods = advertisedMethods(runtime);
 	await write({
@@ -325,7 +345,16 @@ export async function runOmpAuthorityBridge(options: OmpAuthorityBridgeRunnerOpt
 		const controller = new AbortController();
 		controllers.set(frame.id, controller);
 		const request = dispatch(runtime, frame, controller.signal, payload => {
-			void write({ v: OMP_AUTHORITY_BRIDGE_PROTOCOL, type: "event", id: frame.id, event: "terminal", payload });
+			void write({
+				v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+				type: "event",
+				id: frame.id,
+				event: "terminal",
+				payload,
+			}).catch(error => {
+				const message = error instanceof Error ? error.message : String(error);
+				process.stderr.write(`omp bridge: dropped terminal event for ${frame.id}: ${message}\n`);
+			});
 		})
 			.then(
 				result =>
@@ -335,22 +364,26 @@ export async function runOmpAuthorityBridge(options: OmpAuthorityBridgeRunnerOpt
 						id: frame.id,
 						ok: true,
 						result: result ?? null,
-					}),
-				error =>
-					write({
-						v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
-						type: "response",
-						id: frame.id,
-						ok: false,
-						error: safeError(error),
-					}),
+					}).catch(error =>
+						// Oversized success payloads used to kill the process via unhandled rejection.
+						// Downgrade to a structured failure so the host stays connected.
+						writeFailure(
+							frame.id,
+							error instanceof Error && /line limit|text bounds/u.test(error.message)
+								? Object.assign(new Error("response exceeds bridge frame limit"), {
+										code: "RESPONSE_TOO_LARGE",
+									})
+								: error,
+						),
+					),
+				error => writeFailure(frame.id, error),
 			)
 			.then(() => undefined)
 			.finally(() => {
 				controllers.delete(frame.id);
 				requests.delete(request);
 			});
-		requests.add(request);
+			requests.add(request);
 	}
 	for (const controller of controllers.values()) controller.abort();
 	await Promise.allSettled(requests);

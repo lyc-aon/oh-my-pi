@@ -173,4 +173,79 @@ describe("thin OMP authority bridge", () => {
 		input.push("x".repeat(OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES + 1));
 		await expect(running).rejects.toThrow("bridge input exceeds the line limit");
 	});
+
+	test("keeps serving when a success payload exceeds the frame limit", async () => {
+		const input = new AsyncQueue();
+		const output: string[] = [];
+		const huge = {
+			sessionId: sessionId("huge"),
+			path: "/tmp/huge.jsonl",
+			cwd: "/tmp",
+			projectId: projectId("project"),
+			title: "huge",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+			status: "idle" as const,
+			entries: [{ id: "e1", role: "assistant", text: "x".repeat(OMP_AUTHORITY_BRIDGE_MAX_LINE_BYTES) }],
+		};
+		let calls = 0;
+		const base = runtime();
+		const customRuntime = {
+			...base,
+			sessionAuthority: {
+				...base.sessionAuthority,
+				list: async () => {
+					calls += 1;
+					return calls === 1 ? [huge] : [session()];
+				},
+			},
+		} as never;
+		const running = runOmpAuthorityBridge({
+			runtime: customRuntime,
+			input,
+			write: async line => {
+				output.push(line);
+			},
+			identity: { ompVersion: "17.0.5", ompBuild: "test" },
+		});
+		// Wait for ready
+		await Bun.sleep(20);
+		input.push(
+			encodeOmpAuthorityBridgeFrame({
+				v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+				type: "request",
+				id: "big-1",
+				method: "session.list",
+				params: {},
+			}),
+		);
+		// Give the bridge time to attempt the oversized encode and recover
+		await Bun.sleep(50);
+		input.push(
+			encodeOmpAuthorityBridgeFrame({
+				v: OMP_AUTHORITY_BRIDGE_PROTOCOL,
+				type: "request",
+				id: "ok-2",
+				method: "session.list",
+				params: {},
+			}),
+		);
+		await Bun.sleep(50);
+		input.close();
+		await running;
+		const frames = output.map(line => decodeOmpAuthorityBridgeServerFrame(JSON.parse(line)));
+		const ready = frames.find(frame => frame.type === "ready");
+		expect(ready).toBeDefined();
+		const big = frames.find(frame => frame.type === "response" && frame.id === "big-1");
+		expect(big).toMatchObject({
+			type: "response",
+			id: "big-1",
+			ok: false,
+			error: { code: "RESPONSE_TOO_LARGE" },
+		});
+		// Bridge must still answer the follow-up request after the oversized failure.
+		const ok = frames.find(frame => frame.type === "response" && frame.id === "ok-2");
+		expect(ok).toMatchObject({ type: "response", id: "ok-2", ok: true });
+		expect(calls).toBe(2);
+	});
+
 });
