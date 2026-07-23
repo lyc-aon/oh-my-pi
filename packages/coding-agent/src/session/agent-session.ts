@@ -179,6 +179,7 @@ import { shutdownTinyTitleClient } from "../tiny/title-client";
 import { type AskToolDetails, type AskToolInput, recoverAskQuestions } from "../tools/ask";
 import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
 import type { CheckpointState, CompletedRewindState } from "../tools/checkpoint";
+import { releaseComputerSessionsForOwner } from "../tools/computer/supervisor";
 import { normalizeLocalScheme, resolveToCwd } from "../tools/path-utils";
 import {
 	buildResolveReminderMessage,
@@ -3430,6 +3431,19 @@ export class AgentSession {
 		}
 	}
 
+	async #releaseOwnedComputerSessions(ownerId: string | undefined): Promise<void> {
+		if (!ownerId) return;
+		try {
+			await withTimeout(
+				releaseComputerSessionsForOwner(ownerId),
+				3_000,
+				"Timed out releasing native computer session during dispose",
+			);
+		} catch (error) {
+			logger.warn("Failed to release native computer session during dispose", { error: String(error) });
+		}
+	}
+
 	async #disconnectOwnedMcp(): Promise<void> {
 		if (!this.#disconnectOwnedMcpManager) return;
 		try {
@@ -3487,6 +3501,7 @@ export class AgentSession {
 			this.#disposeOwnedAsyncJobs(),
 			this.#eval.disposeKernels(),
 			this.#releaseOwnedBrowserTabs(this.sessionManager.getSessionId()),
+			this.#releaseOwnedComputerSessions(this.#evalKernelOwnerId),
 			shutdownTinyTitleClient(),
 			this.#disconnectOwnedMcp(),
 			advisorRecorderClosed,

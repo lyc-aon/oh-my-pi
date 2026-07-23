@@ -93,6 +93,8 @@ export interface TokenTaskBudget {
 
 export type MessageAttribution = "user" | "agent";
 
+export type NativeToolMarker = { type: "computer" };
+
 export type ToolChoice =
 	| "auto"
 	| "none"
@@ -100,7 +102,8 @@ export type ToolChoice =
 	| "required"
 	| { type: "function"; name: string }
 	| { type: "function"; function: { name: string } }
-	| { type: "tool"; name: string };
+	| { type: "tool"; name: string }
+	| { type: "computer" };
 
 // Base options all providers share
 export type CacheRetention = "none" | "short" | "long";
@@ -352,6 +355,16 @@ export interface CodexCompactionRequestContext extends CodexCompactionMetadata {
 	operationId: string;
 }
 
+export type OpenAIResponseInclude =
+	| "file_search_call.results"
+	| "web_search_call.results"
+	| "web_search_call.action.sources"
+	| "message.input_image.image_url"
+	| "computer_call_output.output.image_url"
+	| "code_interpreter_call.outputs"
+	| "reasoning.encrypted_content"
+	| "message.output_text.logprobs";
+
 export interface StreamOptions {
 	temperature?: number;
 	topP?: number;
@@ -398,6 +411,8 @@ export interface StreamOptions {
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.
 	 */
 	metadata?: Record<string, unknown>;
+	/** OpenAI Responses/Codex response fields to include verbatim. */
+	include?: OpenAIResponseInclude[];
 	/**
 	 * Config options for the thinking/response loop guard.
 	 */
@@ -628,6 +643,50 @@ export interface ImageContent {
 	detail?: "auto" | "low" | "high" | "original";
 }
 
+export type ComputerAction =
+	| {
+			type: "click";
+			button: "left" | "right" | "wheel" | "back" | "forward";
+			x: number;
+			y: number;
+			keys?: string[] | null;
+	  }
+	| { type: "double_click"; x: number; y: number; keys: string[] | null }
+	| { type: "drag"; path: Array<{ x: number; y: number }>; keys?: string[] | null }
+	| { type: "keypress"; keys: string[] }
+	| { type: "move"; x: number; y: number; keys?: string[] | null }
+	| { type: "screenshot" }
+	| { type: "scroll"; x: number; y: number; scroll_x: number; scroll_y: number; keys?: string[] | null }
+	| { type: "type"; text: string }
+	| { type: "wait" };
+
+export interface ComputerSafetyCheck {
+	id: string;
+	code?: string | null;
+	message?: string | null;
+}
+
+export interface ComputerToolCallMetadata {
+	type: "computer";
+	providerItemId: string;
+	actions: ComputerAction[];
+	pendingSafetyChecks: ComputerSafetyCheck[];
+}
+
+export type ToolCallProviderMetadata = ComputerToolCallMetadata;
+
+export type ComputerScreenshotRef =
+	| { type: "computer_screenshot"; image_url: string; file_id?: never }
+	| { type: "computer_screenshot"; file_id: string; image_url?: never };
+
+export interface ComputerToolResultMetadata {
+	type: "computer";
+	screenshot: ComputerScreenshotRef;
+	acknowledgedSafetyChecks: ComputerSafetyCheck[];
+}
+
+export type ToolResultProviderMetadata = ComputerToolResultMetadata;
+
 export interface ToolCall {
 	type: "toolCall";
 	id: string;
@@ -649,6 +708,8 @@ export interface ToolCall {
 	 * JSON function tools.
 	 */
 	customWireName?: string;
+	/** Provider-native metadata required to execute and faithfully replay this call. */
+	providerMetadata?: ToolCallProviderMetadata;
 }
 
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
@@ -769,6 +830,8 @@ export interface ToolResultMessage<TDetails = unknown> {
 	attribution?: MessageAttribution;
 	/** Timestamp when output was pruned (ms since epoch). Undefined if unpruned. */
 	prunedAt?: number;
+	/** Provider-native metadata required to faithfully replay this result. */
+	providerMetadata?: ToolResultProviderMetadata;
 	/**
 	 * Tool-declared: this result carried no information worth retaining once
 	 * consumed (zero matches, elapsed wait). Compaction passes may elide it.
@@ -880,6 +943,8 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	 * calls route correctly. Absent for regular JSON function tools.
 	 */
 	customWireName?: string;
+	/** Selects a provider-native hosted tool instead of a JSON-schema function tool. */
+	native?: NativeToolMarker;
 	/**
 	 * Illustrative calls/notes; the AI layer renders them into an `<examples>`
 	 * block in the model's native tool-call syntax and appends to the wire

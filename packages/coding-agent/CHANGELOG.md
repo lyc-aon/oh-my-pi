@@ -21,6 +21,8 @@
 - Added `models.yml` Bedrock Converse prompt-cache capability overrides for bundled and opaque inference profiles.
 - Documented Vibe mode (`/vibe`) in `docs/vibe-mode.md` and the `/fresh` provider-stream reset in the session-operations doc, and linked both from the README's new "Session controls" section ([#6440](https://github.com/can1357/oh-my-pi/issues/6440)).
 
+- Added the disabled-by-default `computer` essential tool with configurable enablement, backend, display, and maximum width/height settings. Native desktop execution runs through a `DesktopSession` worker; observation uses read approval, input uses exec approval, and provider checks always prompt and fail closed.
+
 ### Changed
 
 - Split the `AgentSession` implementation into focused session-domain controllers while preserving its public API and runtime behavior.

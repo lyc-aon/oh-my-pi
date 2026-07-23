@@ -5,6 +5,7 @@
 ### Added
 
 - Added Anthropic extra-usage reporting across `omp usage`, interactive `/usage`, and ACP `/usage`: the OAuth usage endpoint's authoritative `spend` payload (or legacy `extra_usage` fallback when absent) is normalized into a `Claude Extra Usage` USD row; capped accounts show limit/remaining/fractions and status, while uncapped spend exposes only its absolute used amount—rendered as `$… used` in CLI/TUI and `123.45 usd used` in ACP—without a fabricated cap, percentage, or status. ([#5575](https://github.com/can1357/oh-my-pi/issues/5575))
+- Added OpenAI Responses native computer-use transport support, including batched actions and exact `computer_call`/`computer_call_output` replay with pending/ack safety and `image_url`/`file_id` output references.
 
 ### Fixed
 
