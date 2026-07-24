@@ -205,7 +205,45 @@ function callContext(
 }
 
 describe("native computer worker", () => {
-	it("captures before the first coordinate action, serializes batches, returns fresh captures, and closes once", async () => {
+	const unseenFrameMessage =
+		"Coordinate computer actions require a screenshot returned to the provider; request a screenshot first";
+
+	it("rejects every first-call coordinate action without capturing or executing native input", async () => {
+		const transport = new TestTransport();
+		const native = new FakeNativeSession();
+		const options: DesktopSessionOptions = { backend: "native", display: "all", maxWidth: 1920, maxHeight: 1200 };
+		new ComputerWorkerCore(transport, () => native);
+		const coordinateActions: DesktopAction[] = [
+			{ type: "click", x: 10, y: 20, button: "left" },
+			{ type: "double_click", x: 10, y: 20 },
+			{
+				type: "drag",
+				path: [
+					{ x: 10, y: 20 },
+					{ x: 30, y: 40 },
+				],
+			},
+			{ type: "move", x: 10, y: 20 },
+			{ type: "scroll", x: 10, y: 20, scroll_x: 0, scroll_y: 100 },
+		];
+
+		transport.inbound({ type: "init", options });
+		for (const [index, action] of coordinateActions.entries()) {
+			transport.inbound({ type: "execute", id: `coordinate-${String(index)}`, actions: [action] });
+		}
+		await settle();
+
+		expect(native.calls).toEqual([]);
+		expect(transport.outbound.filter(message => message.type === "error")).toEqual(
+			coordinateActions.map((_, index) => ({
+				type: "error",
+				id: `coordinate-${String(index)}`,
+				error: { name: "Error", message: unseenFrameMessage },
+			})),
+		);
+	});
+
+	it("uses a returned screenshot for later coordinates while preserving ordered fresh results", async () => {
 		const transport = new TestTransport();
 		const native = new FakeNativeSession();
 		const options: DesktopSessionOptions = { backend: "native", display: "all", maxWidth: 1920, maxHeight: 1200 };
@@ -215,24 +253,83 @@ describe("native computer worker", () => {
 		});
 
 		transport.inbound({ type: "init", options });
-		transport.inbound({ type: "execute", id: "one", actions: [{ type: "click", x: 10, y: 20, button: "left" }] });
-		transport.inbound({ type: "execute", id: "two", actions: [{ type: "keypress", keys: ["CTRL", "L"] }] });
+		transport.inbound({ type: "execute", id: "screenshot", actions: [{ type: "screenshot" }] });
+		transport.inbound({
+			type: "execute",
+			id: "coordinate",
+			actions: [{ type: "click", x: 10, y: 20, button: "left" }],
+		});
+		transport.inbound({ type: "execute", id: "keyboard", actions: [{ type: "keypress", keys: ["CTRL", "L"] }] });
 		await settle();
 
 		expect(native.calls).toEqual([
-			{ type: "capture" },
+			{ type: "execute", actions: [{ type: "screenshot" }] },
 			{ type: "execute", actions: [{ type: "click", x: 10, y: 20, button: "left" }] },
 			{ type: "execute", actions: [{ type: "keypress", keys: ["CTRL", "L"] }] },
 		]);
 		expect(native.maxActive).toBe(1);
 		const results = transport.outbound.filter(message => message.type === "result");
-		expect(results.map(result => result.capture.data[0])).toEqual([2, 3]);
-		expect(results.map(result => result.capabilities.displayCount)).toEqual([2, 2]);
+		expect(results.map(result => [result.id, result.capture.data[0]])).toEqual([
+			["screenshot", 1],
+			["coordinate", 2],
+			["keyboard", 3],
+		]);
+		expect(results.map(result => result.capabilities.displayCount)).toEqual([2, 2, 2]);
 
 		transport.inbound({ type: "close" });
 		transport.inbound({ type: "close" });
 		await settle();
 		expect(native.closeCount).toBe(1);
+	});
+
+	it("uses a returned non-coordinate result for later coordinates", async () => {
+		const transport = new TestTransport();
+		const native = new FakeNativeSession();
+		const options: DesktopSessionOptions = { backend: "native", display: "all", maxWidth: 1920, maxHeight: 1200 };
+		new ComputerWorkerCore(transport, () => native);
+
+		transport.inbound({ type: "init", options });
+		transport.inbound({ type: "execute", id: "keyboard", actions: [{ type: "keypress", keys: ["TAB"] }] });
+		transport.inbound({ type: "execute", id: "coordinate", actions: [{ type: "move", x: 30, y: 40 }] });
+		await settle();
+
+		expect(native.calls).toEqual([
+			{ type: "execute", actions: [{ type: "keypress", keys: ["TAB"] }] },
+			{ type: "execute", actions: [{ type: "move", x: 30, y: 40 }] },
+		]);
+		expect(transport.outbound.filter(message => message.type === "result").map(result => result.id)).toEqual([
+			"keyboard",
+			"coordinate",
+		]);
+	});
+
+	it("resets returned-frame state when the worker is recreated", async () => {
+		const options: DesktopSessionOptions = { backend: "native", display: "all", maxWidth: 1920, maxHeight: 1200 };
+		const firstTransport = new TestTransport();
+		const firstNative = new FakeNativeSession();
+		new ComputerWorkerCore(firstTransport, () => firstNative);
+		firstTransport.inbound({ type: "init", options });
+		firstTransport.inbound({ type: "execute", id: "screenshot", actions: [{ type: "screenshot" }] });
+		await settle();
+		expect(firstTransport.outbound.some(message => message.type === "result")).toBe(true);
+
+		const recreatedTransport = new TestTransport();
+		const recreatedNative = new FakeNativeSession();
+		new ComputerWorkerCore(recreatedTransport, () => recreatedNative);
+		recreatedTransport.inbound({ type: "init", options });
+		recreatedTransport.inbound({
+			type: "execute",
+			id: "coordinate-first",
+			actions: [{ type: "scroll", x: 10, y: 20, scroll_x: 0, scroll_y: 100 }],
+		});
+		await settle();
+
+		expect(recreatedNative.calls).toEqual([]);
+		expect(recreatedTransport.outbound).toContainEqual({
+			type: "error",
+			id: "coordinate-first",
+			error: { name: "Error", message: unseenFrameMessage },
+		});
 	});
 });
 

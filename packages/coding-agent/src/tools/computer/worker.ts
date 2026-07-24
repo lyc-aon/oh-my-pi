@@ -37,7 +37,7 @@ function captureTransfer(capture: DesktopCapture): Bun.Transferable[] {
 
 export class ComputerWorkerCore {
 	#session?: NativeDesktopSession;
-	#hasFrame = false;
+	#hasReturnedFrame = false;
 	#closed = false;
 	#tail: Promise<void> = Promise.resolve();
 	readonly #unsubscribe: () => void;
@@ -76,6 +76,7 @@ export class ComputerWorkerCore {
 		}
 		try {
 			this.#session = this.createSession(options);
+			this.#hasReturnedFrame = false;
 			this.transport.send({ type: "ready", capabilities: this.#session.capabilities });
 		} catch (error) {
 			this.transport.send({ type: "error", error: serializeError(error) });
@@ -93,16 +94,24 @@ export class ComputerWorkerCore {
 			return;
 		}
 		try {
-			if (!this.#hasFrame && actions.some(action => COORDINATE_ACTIONS.has(action.type))) {
-				await session.capture();
-				this.#hasFrame = true;
+			if (!this.#hasReturnedFrame && actions.some(action => COORDINATE_ACTIONS.has(action.type))) {
+				this.transport.send({
+					type: "error",
+					id,
+					error: {
+						name: "Error",
+						message:
+							"Coordinate computer actions require a screenshot returned to the provider; request a screenshot first",
+					},
+				});
+				return;
 			}
 			const capture = await session.execute(actions);
-			this.#hasFrame = true;
 			this.transport.send(
 				{ type: "result", id, capture, capabilities: session.capabilities },
 				captureTransfer(capture),
 			);
+			this.#hasReturnedFrame = true;
 		} catch (error) {
 			this.transport.send({ type: "error", id, error: serializeError(error) });
 		}
@@ -117,6 +126,7 @@ export class ComputerWorkerCore {
 			this.transport.send({ type: "error", error: serializeError(error) });
 		} finally {
 			this.#session = undefined;
+			this.#hasReturnedFrame = false;
 			this.#unsubscribe();
 			this.transport.send({ type: "closed" });
 			this.transport.close();

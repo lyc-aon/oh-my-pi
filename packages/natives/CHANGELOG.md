@@ -4,7 +4,11 @@
 
 ### Added
 
-- Added a genuine native desktop backend for computer use, including macOS Quartz/CGEvent support and a lazily loaded Linux x64 glibc addon with X11 capture and libei portal input. Unsupported Linux arm64/musl and currently unsupported pure-Wayland/multi-output cases fail closed.
+- Added a genuine native desktop backend for computer use, including macOS Quartz/CGEvent support and a lazily loaded Linux x64 glibc addon with direct X11/XTest input or Wayland libei portal input. Unsupported Linux arm64/musl and currently unsupported pure-Wayland/multi-output cases fail closed.
+
+### Fixed
+
+- Fixed Linux desktop addon builds against PipeWire 0.3.48 development headers by detecting the pre-0.3.65 SPA video layout at build time.
 
 ## [17.0.8] - 2026-07-22
 

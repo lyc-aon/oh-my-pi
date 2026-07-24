@@ -125,7 +125,7 @@ OMP native execution never creates a provider Files upload. The provider contrac
 6. `ComputerTool.execute()` chooses metadata actions, validates the batch, and rechecks safety approval.
 7. Supervisor serializes execution behind a promise tail and lazily starts one Bun worker.
 8. Worker constructs one native `DesktopSession` and reports capabilities.
-9. A first coordinate batch triggers a pre-capture when no frame exists.
+9. Worker rejects coordinate input until it has returned a screenshot to the provider.
 10. Native session validates all actions, executes them in order, and captures one fresh final PNG.
 11. Worker transfers the PNG buffer to the parent and preserves session/frame state for the next call.
 12. Tool returns image content, display/capability details, and exact GA result metadata.
@@ -147,7 +147,7 @@ Every `DesktopDisplay` carries:
 }
 ```
 
-Coordinate mapping finds the containing PNG display rectangle, scales locally to logical width/height, then adds global origin. Negative global origins work. Negative screenshot points, image bounds, and layout-gap points fail closed.
+Coordinate mapping finds the containing PNG display rectangle, scales locally to logical width/height, then adds global origin. Quartz and Win32 accept negative global origins; Linux input rejects them before emitting events. Negative screenshot points, image bounds, and layout-gap points fail closed.
 
 Before each coordinate action, native code re-enumerates displays and compares ID, logical rectangle, and scale against the stored frame. Difference clears the stored frame and returns `DESKTOP_LAYOUT_CHANGED`; caller must capture again.
 
@@ -156,13 +156,13 @@ Before each coordinate action, native code re-enumerates displays and compares I
 | Target | Native surface |
 |---|---|
 | `darwin-x64`, `darwin-arm64` | Real `DesktopSession` in core addon: xcap/CoreGraphics capture, Quartz `CGEvent` pointer events, native input. Screen Recording preflight; Accessibility required operationally. |
-| `linux-x64` glibc | Core addon remains GUI-free. Separate `pi_natives.desktop.linux-x64[-variant].node` is loaded on first `DesktopSession` construction. X11 capture/input or XWayland capture plus portal/libei input. |
+| `linux-x64` glibc | Core addon remains GUI-free. Separate `pi_natives.desktop.linux-x64[-variant].node` is loaded on first `DesktopSession` construction. X11 uses direct x11rb/XTest input; XWayland capture uses portal/libei input. |
 | `linux-arm64` | Published core has typed unsupported stub; no packaged desktop leaf. |
 | Linux musl | Explicit typed unsupported stub. |
 | `win32-x64` | Real `DesktopSession` in core addon: xcap, native input, `SendInput` absolute movement over the virtual desktop. |
 | Other targets | Native package loader rejects unsupported platform tag. |
 
-Wayland detection wins when `XDG_SESSION_TYPE=wayland` or `WAYLAND_DISPLAY` is set. Capture still requires `DISPLAY` because xcap 0.9.6 uses XWayland. Linux input first verifies the session bus and `org.freedesktop.portal.Desktop`, then initializes Enigo/libei without asking OMP to open a permission prompt. Coordinate input rejects Wayland frames containing more than one selected display.
+Wayland detection wins when `XDG_SESSION_TYPE=wayland` or `WAYLAND_DISPLAY` is set. Capture still requires `DISPLAY` because xcap 0.9.6 uses XWayland. Wayland input verifies the session bus and `org.freedesktop.portal.Desktop`, then initializes Enigo/libei without asking OMP to open a permission prompt. X11 input uses x11rb/XTest directly and never enters that portal path. Coordinate input rejects Wayland frames containing more than one selected display and rejects negative global origins on either Linux backend; XTest additionally requires global coordinates in `0..=32767`.
 
 macOS capture calls `CGPreflightScreenCaptureAccess()` without prompting. Input creation also disables automatic permission prompts. Windows sets DPI awareness and maps pointer coordinates with `MOUSEEVENTF_VIRTUALDESK`, supporting negative origins and secondary displays.
 
@@ -176,7 +176,7 @@ macOS capture calls `CGPreflightScreenCaptureAccess()` without prompting. Input 
 - on abort, terminates worker and rejects pending requests;
 - owner registry supports bulk close on session/eval-owner teardown.
 
-`ComputerWorkerCore` also serializes inbound messages. It initializes once, holds `#hasFrame`, closes native session once, then unsubscribes and closes transport.
+`ComputerWorkerCore` also serializes inbound messages. It initializes once, tracks whether a screenshot was returned, closes native session once, then unsubscribes and closes transport.
 
 Native `DesktopSession` starts a named `omp-desktop-session` thread. Capture/execute/close requests use a FIFO channel. Operation waits are bounded to one minute; explicit close waits up to two seconds and is idempotent. Destructor sends best-effort close but does not block indefinitely on a stuck worker.
 
@@ -220,6 +220,7 @@ Key platform failures and remedies are listed in [Native computer use: Troublesh
 - No non-native backend or browser fallback.
 - No pure Wayland capture; XWayland required.
 - No safe multi-display coordinate input on Wayland.
+- Linux coordinate input rejects negative global display origins; X11/XTest also rejects global positions above 32767.
 - Published Linux native desktop addon: x64 glibc only.
 - Windows backend implemented but not remotely exercised for this feature.
 - Real remote macOS proof used `ComputerSupervisor` → worker → native session on a real macOS host, controlling TextEdit with global hotkey, double-click, click, type, and 1920×1080 Quartz capture after permissions were granted.

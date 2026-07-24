@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/pi-*", "crates/vendor/*"]
-exclude = ["crates/vendor/brush-core", "crates/vendor/brush-builtins"]
+exclude = ["crates/vendor/brush-core", "crates/vendor/brush-builtins", "crates/vendor/libspa"]
 resolver = "3"
 
 [workspace.package]
@@ -14,6 +14,8 @@ repository = "https://github.com/can1357/oh-my-pi"
 [patch.crates-io]
 brush-core = { path = "crates/vendor/brush-core" }
 brush-builtins = { path = "crates/vendor/brush-builtins" }
+# libspa 0.9 assumes PipeWire 0.3.65's video layout; the vendored patch also supports 0.3.48.
+libspa = { path = "crates/vendor/libspa" }
 
 [profile.release]
 opt-level = 3

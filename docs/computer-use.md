@@ -125,13 +125,13 @@ Each result's `displays` metadata maps both spaces:
 - `pixelX`, `pixelY`, `pixelWidth`, `pixelHeight`: rectangle inside the returned PNG.
 - `scale`: native display scale reported by the OS.
 
-Input actions use the returned PNG space. The backend locates the display containing that screenshot pixel, scales within that display rectangle, then adds the display's global logical origin. This supports scaled displays and displays left of or above the primary monitor.
+Input actions use the returned PNG space. The backend locates the display containing that screenshot pixel, scales within that display rectangle, then adds the display's global logical origin. Capture metadata supports displays left of or above the primary monitor; Quartz and Win32 accept those negative origins, while Linux input fails closed as documented below.
 
 The composite preserves gaps between monitor rectangles as black pixels. A point in a gap is not clickable and fails with `DESKTOP_COORDINATE_OUT_OF_BOUNDS`. Points on or beyond the PNG's right/bottom edge, negative points, and points outside every display also fail closed.
 
 If monitor membership, rectangle, or scale changes between the reference frame and a coordinate action, OMP clears the frame and returns `DESKTOP_LAYOUT_CHANGED`. Capture again before retrying. Moving a display, changing resolution/scaling, docking, undocking, or changing the selected display can trigger this guard.
 
-The worker pre-captures a frame if the first call is coordinate-based, but that unseen frame is not a safe basis for model-selected coordinates. Begin with `screenshot`, and capture again after any visual transition whose target may have moved.
+The worker rejects a coordinate action until a screenshot has been returned to the provider. Begin with `screenshot`, then capture again after any visual transition whose target may have moved.
 
 ## Multiple displays
 
@@ -193,7 +193,7 @@ See [Tool approval mode](./approval-mode.md) for general policy resolution.
 | Platform | Backend | Setup and current status |
 |---|---|---|
 | macOS x64/arm64 | Quartz/CoreGraphics capture; Quartz/CGEvent and native input | Supported. Grant Screen Recording and Accessibility. Real remote desktop execution was verified on Apple hardware; see [Verification boundary](#verification-boundary). |
-| Linux x64 glibc, X11 | xcap capture; native X11/libei input | Supported when a graphical session and `DISPLAY` are available. The GUI-linked addon is packaged separately and loaded only when the tool starts. |
+| Linux x64 glibc, X11 | xcap capture; direct x11rb/XTest input | Supported when a graphical session and `DISPLAY` are available. X11 input does not contact the desktop portal. The GUI-linked addon is packaged separately and loaded only when the tool starts. |
 | Linux x64 glibc, Wayland | XWayland capture; libei through the desktop portal | Supported with limitations: active XWayland `DISPLAY` required; portal/session bus required for input; select one display for coordinate input. Pure Wayland capture is not implemented. |
 | Linux arm64 | Portable core addon only | Packaged native desktop capture/input is unsupported. |
 | Linux musl | Portable core addon only | Explicitly unsupported because the capture dependency requires dynamically linked graphical-session libraries. |
@@ -212,7 +212,7 @@ OMP performs a non-prompting Screen Recording preflight. It does not open the pe
 
 ### Linux setup
 
-For X11, run OMP inside the target graphical session and ensure `DISPLAY` identifies it.
+For X11, run OMP inside the target graphical session and ensure `DISPLAY` identifies it. Input uses XTest directly and does not require D-Bus, a desktop portal, or libei.
 
 For Wayland:
 
@@ -263,7 +263,7 @@ Computer backend errors begin with a stable code:
 |---|---|
 | `DESKTOP_INVALID_OPTIONS` | Invalid backend, zero image limit, malformed display value, or inactive display ID. Correct config and start a new session. |
 | `DESKTOP_INVALID_ACTION` | Unknown action/button/key, missing or unexpected fields, negative point, short drag path, or invalid/duplicate modifier. Capture again only after fixing the action. |
-| `DESKTOP_BACKEND_UNAVAILABLE` | No graphical session/backend, unsupported build, missing portal/XWayland, unsafe multi-display Wayland mapping, or native input initialization failure. Follow the platform section. |
+| `DESKTOP_BACKEND_UNAVAILABLE` | No graphical session/backend, unsupported build, missing portal/XWayland, unsafe Wayland mapping, negative-origin Linux layout, out-of-range XTest layout, or native input initialization failure. Follow the platform section. |
 | `DESKTOP_PERMISSION_DENIED` | Screen capture or input permission denied. Grant OS permissions and restart the host/session. |
 | `DESKTOP_CAPTURE_FAILED` | Display capture, scaling, allocation, or PNG encoding failed. Reduce `maxWidth`/`maxHeight`, verify the display is active, then capture again. |
 | `DESKTOP_INPUT_FAILED` | Native input initialization/event failed. Check Accessibility/portal/compositor permissions and session access. |
@@ -277,6 +277,8 @@ Common exact failures:
 - `Wayland capture through xcap 0.9.6 requires an active XWayland DISPLAY; pure Wayland capture is unavailable` → enable XWayland or use X11.
 - `Wayland/libei absolute input cannot safely correlate a multi-display XWayland composite` → set a single display or use X11.
 - `org.freedesktop.portal.Desktop is not available for native libei input` → start/install the desktop portal in the same user session.
+- `X11/x11rb XTest absolute input cannot represent negative global desktop coordinates` → select a display whose origin is non-negative.
+- `X11/x11rb XTest absolute input is limited to global coordinates in 0..=32767` → select one display or a smaller layout.
 - `macOS Screen Recording permission is not granted for this process` → grant the launching host Screen Recording and restart it.
 - `Provider safety checks require interactive approval before computer input` → use an interactive session and approve the provider prompt.
 - `Timed out starting native computer worker` → verify the installed native addon matches the OMP release, then restart/reinstall.
@@ -295,6 +297,8 @@ The native composite safety ceiling is 268,435,456 pixels. Normal defaults are f
 - Gaps are visible but not valid input targets; overlapping non-mirrored layouts fail closed.
 - Pure Wayland capture currently requires XWayland; it is not a native portal capture path.
 - Multi-output Wayland coordinate input fails closed; select one display or X11.
+- Linux coordinate input fails closed for negative global display origins; select a display whose origin is non-negative.
+- X11/XTest coordinate input is limited to global positions through 32767 on each axis.
 - Published Linux desktop support is x64 glibc only; Linux arm64 and musl are unsupported.
 - Windows support is implemented for x64 but was not remotely exercised for this change.
 - Native captures use inline `image_url`; OMP does not upload them to provider Files.
