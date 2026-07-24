@@ -6,6 +6,27 @@ This repo contains multiple packages, but **`packages/coding-agent/`** is the pr
 
 **Terminology**: When the user says "agent" or asks "why is agent doing X", they mean the **coding-agent package implementation**, not you (the assistant). The coding-agent is a CLI tool — questions about its behavior refer to code in `packages/coding-agent/`, not your current session.
 
+## Michael's Live OMP Service Map
+
+> Verified 2026-07-24 MDT. This is current operator state, not a statement of repository defaults. Re-check live state before changing infrastructure.
+
+| Function | Primary endpoint | Runtime and authority |
+| --- | --- | --- |
+| Auth broker | `http://100.65.141.51:8876` | Bunker user unit `/home/lycaon/.config/systemd/user/omp-broker-primary.service`, running `/home/lycaon/bin/omp`. This is the primary credential writer. Its config root is `/home/lycaon/.omp-primary`; the canonical SQLite vault is `/home/lycaon/.omp-primary/agent/agent.db` with its WAL/SHM files. |
+| Auth gateway | `http://100.65.141.51:8878` | Bunker user unit `/home/lycaon/.config/systemd/user/omp-gateway-primary.service`, running `/home/lycaon/bin/omp`. It reads broker-backed, redacted credential state and has no credential-write authority. |
+| Collab relay | `wss://bunker-collab-relay.tail9f9e1a.ts.net` | Bunker K3s service `omp-dev/collab-relay`. It holds only live, in-memory room connections. |
+| Collab web | `https://bunker-collab-web.tail9f9e1a.ts.net` | Bunker K3s service `omp-dev/collab-web`. It serves static files only; the relay room link stays in the URL fragment. |
+
+All four endpoints are private tailnet services. The raw HTTP broker and gateway are not public ingress. Their health routes are unauthenticated by protocol; every other auth-service route still requires its bearer.
+
+The Mac global config at `~/.omp/agent/config.yml` selects the Bunker broker. New gateway callers use Bunker port `8878`; new collab rooms use the Bunker relay and web URLs. Shared credential state lives in the Bunker broker vault. Agent execution and session state remain on the machine hosting omp. The collab web tier is stateless, and the relay cannot migrate a live room.
+
+The old Mac broker (`100.103.10.39:8876`), gateway (`127.0.0.1:8877`), relay (`:7466`), and static web server (`:7467`) are compatibility-drain jobs only. Their LaunchAgent labels are disabled, but the existing processes remain loaded so pre-cutover connections and rooms can finish. **Do not stop, unload, restart, kill, re-enable, or point new clients at them.** They are not fallback authority.
+
+Never inspect or copy `/home/lycaon/.omp-primary/auth-broker.token`, the live SQLite vault/WAL/SHM, or `/home/lycaon/.config/omp-primary-gateway.env`. Never start a second broker against a copied vault. Credential login, logout, import, disable, token rotation, service retirement, and any change to these units require a separate explicit operator action.
+
+Application source is `/Users/michaelkelly/dev/ai/oh-my-pi` (`feat/mechanism`). Bunker collab deployment and recovery authority is `/home/lycaon/dev/systems/k3s-platform/projects/omp/README.md`; it pins the full web/relay revisions and the clean-worktree build, image-load, apply, and verification procedure. The current static-web image was historically built from the disposable clone `/home/lycaon/tmp/omp-collab-web-f8bce2bde`, which is not a recovery source or the source of `/home/lycaon/bin/omp`. See [`docs/auth-broker-gateway.md`](docs/auth-broker-gateway.md) and [`docs/collab.md`](docs/collab.md) before auth or collab work.
+
 ### Package Structure
 
 | Package                 | Description                                          |

@@ -9,6 +9,43 @@ Transport security between operator, broker, and gateway is delegated to the ope
 
 Source: `packages/ai/src/auth-broker/`, `packages/ai/src/auth-gateway/`, `packages/coding-agent/src/cli/auth-broker-cli.ts`, `packages/coding-agent/src/cli/auth-gateway-cli.ts`, `packages/coding-agent/src/session/auth-broker-config.ts`.
 
+## Current Michael/Lycaon deployment
+
+> Verified 2026-07-24 MDT. This section records current live operator state. The CLI defaults documented below are unchanged.
+
+| Role | Private primary endpoint | Runtime |
+| --- | --- | --- |
+| Broker | `http://100.65.141.51:8876` | Bunker systemd user unit `/home/lycaon/.config/systemd/user/omp-broker-primary.service`; `ExecStart` uses `/home/lycaon/bin/omp auth-broker serve --bind=100.65.141.51:8876`. |
+| Gateway | `http://100.65.141.51:8878` | Bunker systemd user unit `/home/lycaon/.config/systemd/user/omp-gateway-primary.service`; `ExecStart` uses `/home/lycaon/bin/omp auth-gateway serve --bind=100.65.141.51:8878`. |
+
+These are tailnet-only HTTP endpoints, not public internet ingress. The broker's `/v1/healthz` and gateway's `/healthz` are unauthenticated by protocol. Every other route requires the service's bearer; tailnet reachability does not replace that check.
+
+### State and authority
+
+- The Bunker broker is the primary credential authority. Its config root is `/home/lycaon/.omp-primary`. The canonical SQLite files are `/home/lycaon/.omp-primary/agent/agent.db`, `agent.db-wal`, and `agent.db-shm`. Its bearer is `/home/lycaon/.omp-primary/auth-broker.token`. Do not inspect, print, or copy the bearer or live database files.
+- The Bunker gateway is a broker client, not a second vault. Its runtime config root is `/home/lycaon/.omp-gateway-primary`; its secret-bearing broker environment file is `/home/lycaon/.config/omp-primary-gateway.env`. Agents may use that path to identify configuration ownership but must not read or copy its contents.
+- Mac global OMP config at `~/.omp/agent/config.yml` selects the Bunker broker. The post-cutover auth status and gateway check succeeded with 19 credentials. A client in broker mode may retain an encrypted local snapshot at `~/.omp/cache/auth-broker-snapshot.enc`, but that cache is not writable credential authority.
+- Hermes' `/Users/michaelkelly/dev/ai/hermes-agent-omp/scripts/omp_broker_secrets.py` bridges only the owner-readable gateway bearer into `OMP_HERMES_AUTH_GATEWAY_TOKEN`; it does not select the gateway URL or grant database authority. Hermes gateway callers use the Bunker gateway endpoint, not Mac loopback.
+
+### Mac compatibility drain
+
+The pre-cutover LaunchAgents remain loaded only so established clients and requests can drain:
+
+| Role | Drain endpoint | LaunchAgent definition |
+| --- | --- | --- |
+| Broker | `http://100.103.10.39:8876` | `/Users/michaelkelly/Library/LaunchAgents/com.omp.broker-default.plist` |
+| Gateway | `http://127.0.0.1:8877` | `/Users/michaelkelly/Library/LaunchAgents/com.omp.auth-gateway-default.plist` |
+
+Their labels are disabled, so they are not a durable fallback and must not receive new callers. Do not stop, unload, restart, kill, re-enable, or perform credential administration through either job while the drain is active.
+
+### Safe operator rules
+
+1. Send new OMP broker clients and every new credential mutation to Bunker port `8876`. Send new gateway clients to Bunker port `8878`.
+2. Keep one primary credential vault. Do not copy the live SQLite/WAL/SHM set to create another broker, and do not run two brokers against divergent copies.
+3. Do not rotate or redistribute broker or gateway bearers as part of an endpoint cutover. URL migration and token rotation are separate operations.
+4. Keep bearer auth enabled on non-loopback binds. Never use `--no-auth` for the Bunker gateway.
+5. Retiring the Mac jobs is a separate operator action after every pre-cutover consumer has drained. Documentation changes do not authorize a service operation.
+
 ## Data flow
 
 ```

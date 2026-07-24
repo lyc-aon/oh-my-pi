@@ -2,6 +2,33 @@
 
 `/collab` shares your running session with other omp instances in real time. Guests render the **same session natively in their own TUI** — streaming assistant text, tool-call cards, footer state (cwd, model, context %, cost), ctrl+o expansion, `/dump` — no terminal mirroring. Guests can prompt and interrupt the agent; the host machine runs the agent and all tools.
 
+## Current Michael/Lycaon deployment
+
+> Verified 2026-07-24 MDT. This is current live operator state; the repository defaults remain `my.omp.sh`.
+
+| Tier | Private primary endpoint | Runtime and state |
+| --- | --- | --- |
+| WebSocket relay | `wss://bunker-collab-relay.tail9f9e1a.ts.net` | Bunker K3s `omp-dev/collab-relay`, behind Tailscale ingress. It runs `packages/collab-web/scripts/local-relay.ts`, routes opaque frames, and keeps rooms only in process memory. |
+| Static browser client | `https://bunker-collab-web.tail9f9e1a.ts.net` | Bunker K3s `omp-dev/collab-web`, behind a separate Tailscale ingress. It serves the built `packages/collab-web/dist` files and holds no room or session state. |
+
+New rooms use both endpoints:
+
+```yaml
+collab:
+  relayUrl: wss://bunker-collab-relay.tail9f9e1a.ts.net
+  webUrl: https://bunker-collab-web.tail9f9e1a.ts.net
+```
+
+The browser URL names the static web host. Its fragment contains the relay-specific room link, so loading the page does not make the web service a relay. The omp host remains authoritative for the agent, tools, working directory, and source session. The relay holds only live connections; guests keep their local replicas under `~/.omp/collab/`.
+
+Deployment manifests live under `/home/lycaon/dev/systems/k3s-platform/projects/omp`. Use `/home/lycaon/dev/systems/k3s-platform/projects/omp/README.md` as the durable build, image-load, deployment, verification, and recovery runbook; it pins `fork/feat/mechanism`, the full web/relay revisions, and clean-worktree requirements. The application checkout to edit is `/Users/michaelkelly/dev/ai/oh-my-pi` (`feat/mechanism`). The current static image was built from the disposable clone `/home/lycaon/tmp/omp-collab-web-f8bce2bde` at revision `f8bce2bde`; that clone is not a recovery source and is unrelated to the Bunker `/home/lycaon/bin/omp` executable used by the auth services.
+
+### Mac compatibility drain
+
+The old Mac relay on port `7466` (`/Users/michaelkelly/Library/LaunchAgents/com.omp.collab-relay.plist`) and static web server on `127.0.0.1:7467` (`/Users/michaelkelly/Library/LaunchAgents/com.omp.collab-web.plist`) remain loaded only for pre-cutover rooms. Their LaunchAgent labels are disabled.
+
+Do not stop, unload, restart, kill, or re-enable either process during the drain. Do not point new rooms at them. A room exists only in one relay process and cannot be transferred; changing a relay URL or restarting that relay terminates the established room. Let old rooms close naturally, and use the Bunker endpoints for every new room.
+
 ## Quick start
 
 Host:
@@ -18,7 +45,7 @@ Collab session started!
  • or any web browser: my.omp.sh/#mgAYTZwEnpRQtca0CTgn-Q.gdJUbTovD94ofDaa8YvhY0-ty16w4fn8PgB6PLnoA30
 ```
 
-The browser line is click-to-join (an OSC 8 hyperlink to the full `https://` deep link): the relay serves the web guest client at `/`, and the room id + key ride in the URL fragment. From another omp (any directory, any machine), either form works:
+The browser line is click-to-join (an OSC 8 hyperlink to the full `https://` deep link). In a combined deployment such as `my.omp.sh`, one host may serve both the web guest client and relay. In a split deployment, the outer URL selects the static web host and the fragment carries the relay link. From another omp (any directory, any machine), either form works:
 
 Running `/collab` or `/collab view` starts or displays the active hosting session, rendering both the terminal/browser join links and their corresponding QR codes.
 
@@ -95,9 +122,11 @@ Known v1 limit for guests: a turn already streaming when you join becomes visibl
 
 ## Web client
 
-`packages/collab-web` is a standalone browser client for the same links — no omp install needed on the guest side. The relay serves it at `/`, which is what makes the `/collab` deep link click-to-join: `https://<relay>/#<link>` loads the client and auto-connects from the fragment. It renders the live transcript (streaming text, thinking, tool cards), a subagent panel with on-demand transcripts, and a composer with the same guest powers (prompt, interrupt, hub actions). Run `bun run dev` in the package for a local instance, `bun run mock-host` for an offline scripted host to develop against, and `bun run build` to emit a static `dist/` deployable anywhere (HTTPS required for WebCrypto). The client never talks to anything but the relay, and the key stays in the URL fragment.
+`packages/collab-web` is a standalone browser client for the same links; no omp install is needed on the guest side. A combined service can expose it at `/`, while a split deployment serves the built files from a separate HTTPS origin. In both layouts the room id, key, and relay address stay in the URL fragment. The client connects only to the relay and never sends the fragment to the static web server.
 
-Set `collab.webUrl` when the browser UI is hosted separately from the websocket relay. When empty, `/collab` derives `http(s)://host[:port]` from `collab.relayUrl`; explicit web UI URLs must use `https://` except for `http://localhost` development origins. The generated browser URL still carries the relay-specific collab link in the fragment.
+The client renders the live transcript (streaming text, thinking, tool cards), a subagent panel with on-demand transcripts, and a composer with the same guest powers (prompt, interrupt, hub actions). Run `bun run dev` in the package for a local instance, `bun run mock-host` for an offline scripted host to develop against, and `bun run build` to emit `dist/` for static deployment. HTTPS is required for WebCrypto.
+
+Set `collab.webUrl` when the browser UI is hosted separately from the WebSocket relay. When empty, `/collab` derives `http(s)://host[:port]` from `collab.relayUrl`; explicit web UI URLs must use `https://` except for `http://localhost` development origins. The generated browser URL still carries the relay-specific collab link in the fragment.
 
 ## Settings
 
@@ -109,14 +138,16 @@ Set `collab.webUrl` when the browser UI is hosted separately from the websocket 
 | `share.serverUrl` | `https://my.omp.sh/s` | Share viewer/upload base used by `/share` (links are `<base>/<id>#<key>`) |
 | `share.redactSecrets` | `true` | Run the secret obfuscator over `/share` snapshots before upload |
 
-## Self-hosting the relay
+## Self-hosting
 
-The relay is a small content-blind Go service. It keeps no state beyond live connections and exposes:
+The production Go service can combine relay, static web, and `/share` routes:
 
-- `GET /` — the static collab-web guest client (target of the `/collab` deep link),
-- `GET /r/<roomId>?role=host|guest` — WebSocket upgrade,
-- `POST /s` / `GET /s/<id>` / `GET /s/<id>/raw` — `/share` blob upload, viewer page, and blob fetch,
-- `GET /healthz` — liveness.
+- `GET /` serves the collab-web guest client.
+- `GET /r/<roomId>?role=host|guest` upgrades to WebSocket.
+- `POST /s`, `GET /s/<id>`, and `GET /s/<id>/raw` implement `/share`.
+- `GET /healthz` reports liveness.
+
+The standalone Bun relay at `packages/collab-web/scripts/local-relay.ts` is intentionally narrower. It implements only the `/r/<roomId>?role=host|guest` WebSocket path, keeps its room map in memory, and serves no web client or `/share` endpoints. When deploying this relay, serve `packages/collab-web/dist` from a separate static HTTPS service and set both `collab.relayUrl` and `collab.webUrl`.
 
 
 ## Architecture notes
