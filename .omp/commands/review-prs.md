@@ -29,7 +29,7 @@ Print the resolved set before fanning out so the user can confirm scope.
 
 ### 2. Fan out one subagent per PR
 
-Use **`task` with parallel subagents** — one task per PR. Pass the PR number, head ref, author, and the workflow below as the assignment. Each subagent works in isolation; they coordinate via `irc` only if a fix on PR A would obviously conflict with PR B.
+Use **`task` with the project-local `pr-preparer` agent** in parallel, one task per PR. Pass the PR number, head ref, author, and the workflow below as the assignment. Each subagent works in isolation; coordinate via `irc` only if a fix on PR A would obviously conflict with PR B.
 
 Each subagent **MUST** follow this exact workflow:
 

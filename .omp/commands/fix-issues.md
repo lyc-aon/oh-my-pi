@@ -29,7 +29,7 @@ Print the resolved set before fanning out so the user can confirm scope.
 
 ### 2. Fan out one subagent per issue
 
-Use **`task` with parallel subagents** — one task per issue. Pass the issue number, title, body summary, and the workflow below as the assignment. Subagents work in isolation; coordinate via `irc` only when two issues clearly touch the same file.
+Use **`task` with the project-local `issue-fixer` agent** in parallel, one task per issue. Pass the issue number, title, body summary, and the workflow below as the assignment. Subagents work in isolation; coordinate via `irc` only when two issues clearly touch the same file.
 
 Each subagent **MUST** follow this exact workflow:
 
