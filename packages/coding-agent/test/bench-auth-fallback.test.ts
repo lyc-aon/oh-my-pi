@@ -8,6 +8,7 @@ import type {
 	Model,
 } from "@oh-my-pi/pi-ai";
 import { type BenchModelRegistry, runBenchCommand } from "@oh-my-pi/pi-coding-agent/cli/bench-cli";
+import type { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 
 function fakeModel(provider: string, id: string): Model<Api> {
 	return {
@@ -85,12 +86,13 @@ async function runBench(
 	selector: string,
 	registry: BenchModelRegistry,
 	streamFactory: () => AssistantMessageEventStream = fakeStream,
+	settings?: Settings,
 ) {
 	const stderr: string[] = [];
 	const summary = await runBenchCommand(
 		{ models: [selector], flags: { runs: 1, maxTokens: 64, json: false } },
 		{
-			createRuntime: async () => ({ modelRegistry: registry, settings: undefined, close: () => {} }),
+			createRuntime: async () => ({ modelRegistry: registry, settings, close: () => {} }),
 			randomSessionId: () => "sess-1",
 			writeStdout: () => {},
 			writeStderr: text => stderr.push(text),
@@ -117,6 +119,22 @@ describe("bench credential-aware provider selection", () => {
 		expect(summary.failures).toBe(0);
 		expect(stderr).toContain('no credentials for "groq"');
 		expect(stderr).toContain("openrouter/openai/gpt-oss-20b");
+	});
+
+	it("expands nested configured role aliases before resolving a bench selector", async () => {
+		const registry = fakeRegistry({ models: [fakeModel("acme", "model-x")], authedProviders: ["acme"] });
+		const settings = {
+			getModelRole(role: string) {
+				if (role === "default") return "pi/slow";
+				if (role === "slow") return "acme/model-x";
+				return undefined;
+			},
+		} as Settings;
+
+		const { summary } = await runBench("default", registry, fakeStream, settings);
+
+		expect(summary.models[0].model).toBe("acme/model-x");
+		expect(summary.failures).toBe(0);
 	});
 
 	it("redirects across providers whose local ids differ, via canonical variants", async () => {

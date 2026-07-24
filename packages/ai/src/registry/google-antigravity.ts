@@ -1,6 +1,16 @@
 import type { OAuthCredentials, OAuthLoginCallbacks } from "./oauth/types";
 import type { ProviderDefinition } from "./types";
 
+function toCloudCodeAssistKey(credentials: OAuthCredentials): string {
+	return JSON.stringify({
+		token: credentials.access,
+		projectId: credentials.projectId,
+		refreshToken: credentials.refresh,
+		expiresAt: credentials.expires,
+		email: credentials.email,
+	});
+}
+
 export const googleAntigravityProvider = {
 	id: "google-antigravity",
 	name: "Antigravity (Gemini 3, Claude, GPT-OSS)",
@@ -16,6 +26,7 @@ export const googleAntigravityProvider = {
 		const { refreshAntigravityToken } = await import("./oauth/google-antigravity");
 		return refreshAntigravityToken(credentials.refresh, credentials.projectId);
 	},
+	getApiKey: toCloudCodeAssistKey,
 	callbackPort: 51121,
 	pasteCodeFlow: true,
 } as const satisfies ProviderDefinition;
