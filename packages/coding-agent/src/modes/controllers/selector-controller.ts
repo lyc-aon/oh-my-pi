@@ -450,6 +450,19 @@ export class SelectorController {
 					this.ctx.showError(`Failed to apply xd:// prompt docs setting: ${err}`);
 				});
 				break;
+			case "eval.js":
+				void this.ctx.session
+					.reconcileGpt56CodexProfile()
+					.then(() => this.ctx.session.refreshBaseSystemPrompt())
+					.catch(err => {
+						this.ctx.showError(`Failed to apply eval prompt setting: ${err}`);
+					});
+				break;
+			case "eval.gpt56CodexProfile":
+				void this.ctx.session.reconcileGpt56CodexProfile().catch(err => {
+					this.ctx.showError(`Failed to apply GPT-5.6 Codex profile setting: ${err}`);
+				});
+				break;
 			case "memory.backend":
 				void this.ctx.session.applyMemoryBackend().catch(err => {
 					this.ctx.showError(`Failed to apply memory backend: ${err}`);

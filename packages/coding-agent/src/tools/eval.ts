@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
-import type { ImageContent, ToolExample } from "@oh-my-pi/pi-ai";
+import type { Tool as AiTool, ImageContent, ToolExample } from "@oh-my-pi/pi-ai";
+import { jsonSchemaToTypeScript, toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { prompt } from "@oh-my-pi/pi-utils";
 import { type } from "arktype";
 import { jsBackend, juliaBackend, pythonBackend, rubyBackend } from "../eval";
@@ -9,7 +10,10 @@ import { IdleTimeout } from "../eval/idle-timeout";
 import { defaultEvalSessionId } from "../eval/session-id";
 import type { EvalCellResult, EvalDisplayOutput, EvalLanguage, EvalStatusEvent, EvalToolDetails } from "../eval/types";
 import evalDescription from "../prompts/tools/eval.md" with { type: "text" };
+import evalGpt56CodeModePolicy from "../prompts/tools/eval-gpt56-code-mode.md" with { type: "text" };
+import evalGpt56ParallelPolicy from "../prompts/tools/eval-gpt56-parallel.md" with { type: "text" };
 import { DEFAULT_MAX_BYTES, OutputSink, type OutputSummary, TailBuffer } from "../session/streaming-output";
+import { openAICodexGpt56EvalProfile } from "../task/prompt-policy";
 import { resolveSpawnPolicy } from "../task/spawn-policy";
 import { webpExclusionForModel } from "../utils/image-loading";
 import { formatDimensionNote, resizeImage } from "../utils/image-resize";
@@ -169,6 +173,10 @@ export interface EvalToolDescriptionOptions {
 	 * `false`/`""` hides `agent()`, and a comma list drives the advertised default.
 	 */
 	spawns?: boolean | string | null;
+	/** Add the opt-in GPT-5.6 Sol Codex Lite concurrency guidance. */
+	gpt56ParallelPolicy?: boolean;
+	/** Add the opt-in GPT-5.6 Terra/Luna code-mode-only nested tool catalog. */
+	gpt56CodeModeTools?: readonly AgentTool[];
 }
 
 export function getEvalToolDescription(options: EvalToolDescriptionOptions = {}): string {
@@ -177,6 +185,17 @@ export function getEvalToolDescription(options: EvalToolDescriptionOptions = {})
 	const rb = options.rb ?? false;
 	const jl = options.jl ?? false;
 	const spawnPolicy = resolveSpawnPolicy(options.spawns ?? true);
+	const gpt56CodeModePolicy =
+		options.gpt56CodeModeTools === undefined
+			? ""
+			: prompt.render(evalGpt56CodeModePolicy, {
+					tools: options.gpt56CodeModeTools.map(tool => ({
+						name: tool.name,
+						label: tool.label,
+						description: tool.description,
+						argsType: jsonSchemaToTypeScript(toolWireSchema(tool as AiTool)),
+					})),
+				});
 	return prompt.render(evalDescription, {
 		py,
 		js,
@@ -185,6 +204,8 @@ export function getEvalToolDescription(options: EvalToolDescriptionOptions = {})
 		spawns: spawnPolicy.enabled,
 		spawnDefaultAgent: spawnPolicy.defaultAgent,
 		spawnAllowedAgentsText: spawnPolicy.allowedPromptText,
+		gpt56ParallelPolicy: options.gpt56ParallelPolicy ? evalGpt56ParallelPolicy : "",
+		gpt56CodeModePolicy,
 	});
 }
 
@@ -296,12 +317,21 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 		if (!this.session) return getEvalToolDescription();
 		const backends = resolveEvalBackends(this.session);
 		const sessionSpawns = this.session.getSessionSpawns?.() ?? "*";
+		const gpt56Profile =
+			backends.js &&
+			this.session.isToolActive?.("eval") !== false &&
+			this.session.settings.get("eval.gpt56CodexProfile")
+				? openAICodexGpt56EvalProfile(this.session.getActiveModel?.())
+				: null;
 		return getEvalToolDescription({
 			py: backends.python,
 			js: backends.js,
 			rb: backends.ruby,
 			jl: backends.julia,
 			spawns: sessionSpawns,
+			gpt56ParallelPolicy: gpt56Profile === "sol-hybrid",
+			gpt56CodeModeTools:
+				gpt56Profile === "code-mode-only" ? (this.session.getToolsCallableFromEval?.() ?? []) : undefined,
 		});
 	}
 	/** All reuse-chain examples; the `examples` getter filters by enabled languages. */

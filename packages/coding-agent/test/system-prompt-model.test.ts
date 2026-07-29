@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Agent } from "@oh-my-pi/pi-agent-core";
+import { Agent, type AgentTool } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
@@ -10,7 +10,8 @@ import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { buildSystemPrompt } from "@oh-my-pi/pi-coding-agent/system-prompt";
-import { usesCodexTaskPrompt } from "@oh-my-pi/pi-coding-agent/task/prompt-policy";
+import { usesCodexTaskPrompt, usesOpenAICodexGpt56SolLitePrompt } from "@oh-my-pi/pi-coding-agent/task/prompt-policy";
+import { EvalTool } from "@oh-my-pi/pi-coding-agent/tools/eval";
 import { removeSyncWithRetries } from "@oh-my-pi/pi-utils";
 import { cleanupTempHome } from "./helpers/temp-home-cleanup";
 
@@ -187,21 +188,34 @@ describe("AgentSession model-change prompt refresh", () => {
 		return [defaultPolicy, codexPolicy];
 	}
 
+	function pickModelsAcrossEvalPolicies(): [Model, Model] {
+		const all = modelRegistry.getAll();
+		const codexLitePolicy = all.find(usesOpenAICodexGpt56SolLitePrompt);
+		const sameTaskPolicy = all.find(
+			model => usesCodexTaskPrompt(model.id) && !usesOpenAICodexGpt56SolLitePrompt(model),
+		);
+		if (!sameTaskPolicy || !codexLitePolicy) {
+			throw new Error("Expected GPT-5.6 models on both sides of the Codex Lite eval prompt policy");
+		}
+		return [sameTaskPolicy, codexLitePolicy];
+	}
+
 	function newSession(
 		model: Model,
 		settings: Settings,
 		rebuild: () => Promise<{ systemPrompt: string[] }>,
+		tools: AgentTool[] = [],
 	): AgentSession {
 		const agent = new Agent({
 			getApiKey: () => "test-key",
-			initialState: { model, systemPrompt: ["initial"], tools: [], messages: [] },
+			initialState: { model, systemPrompt: ["initial"], tools, messages: [] },
 		});
 		const created = new AgentSession({
 			agent,
 			sessionManager: SessionManager.inMemory(),
 			settings,
 			modelRegistry,
-			toolRegistry: new Map(),
+			toolRegistry: new Map(tools.map(tool => [tool.name, tool])),
 			rebuildSystemPrompt: async () => rebuild(),
 		});
 		return created;
@@ -266,5 +280,37 @@ describe("AgentSession model-change prompt refresh", () => {
 		await session.setModel(modelB);
 		expect(rebuildCount).toBe(1);
 		expect(session.agent.state.systemPrompt).toEqual(["policy changed"]);
+	});
+
+	it("rebuilds a hidden-model prompt when the opted-in eval policy changes", async () => {
+		const previousResponsesLite = Bun.env.PI_CODEX_RESPONSES_LITE;
+		delete Bun.env.PI_CODEX_RESPONSES_LITE;
+		try {
+			const [modelA, modelB] = pickModelsAcrossEvalPolicies();
+			authStorage.setRuntimeApiKey(modelA.provider, "key-a");
+			authStorage.setRuntimeApiKey(modelB.provider, "key-b");
+
+			let rebuildCount = 0;
+			session = newSession(
+				modelA,
+				Settings.isolated({
+					"compaction.enabled": false,
+					includeModelInPrompt: false,
+					"eval.gpt56CodexProfile": true,
+				}),
+				async () => {
+					rebuildCount++;
+					return { systemPrompt: ["eval policy changed"] };
+				},
+				[new EvalTool(null) as unknown as AgentTool],
+			);
+
+			await session.setModel(modelB);
+			expect(rebuildCount).toBe(1);
+			expect(session.agent.state.systemPrompt).toEqual(["eval policy changed"]);
+		} finally {
+			if (previousResponsesLite === undefined) delete Bun.env.PI_CODEX_RESPONSES_LITE;
+			else Bun.env.PI_CODEX_RESPONSES_LITE = previousResponsesLite;
+		}
 	});
 });

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OMP's explicit `off` thinking selector on GPT-5.6 Codex requests being translated into an omitted effort, which let the server apply its reasoning default; it now sends `reasoning.effort: "none"` while fixed `low` through `max` efforts remain unchanged.
+
 ## [17.1.8] - 2026-07-28
 
 ### Fixed
