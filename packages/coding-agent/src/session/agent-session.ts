@@ -4124,7 +4124,7 @@ export class AgentSession {
 		return this.#tools.setActiveToolsByName(toolNames);
 	}
 
-	/** Reconcile the default-off exact-model GPT-5.6 Codex eval profile. */
+	/** Reconcile the exact-model GPT-5.6 Codex eval profile. */
 	reconcileGpt56CodexProfile(): Promise<void> {
 		return this.#tools.reconcileGpt56CodexProfile();
 	}
