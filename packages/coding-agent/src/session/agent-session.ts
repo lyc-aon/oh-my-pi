@@ -1174,6 +1174,7 @@ export class AgentSession {
 		};
 		this.#tools = new SessionTools(sessionToolsHost, {
 			autoApprove: config.autoApprove,
+			gpt56CodexProfileEligible: config.gpt56CodexProfileEligible,
 			toolRegistry: config.toolRegistry,
 			createVibeTools: config.createVibeTools,
 			createComputerTool: config.createComputerTool,
@@ -4061,6 +4062,16 @@ export class AgentSession {
 		return this.#tools.getToolByName(name);
 	}
 
+	/** Resolve a policy-eligible executable tool for a nested eval call. */
+	getToolForEval(name: string): AgentTool | undefined {
+		return this.#tools.getToolForEval(name);
+	}
+
+	/** Tools exposed in an eval-only model's nested catalog. */
+	getToolsCallableFromEval(): AgentTool[] {
+		return this.#tools.getToolsCallableFromEval();
+	}
+
 	/** Whether a registry entry came from a built-in factory. */
 	hasBuiltInTool(name: string): boolean {
 		return this.#tools.hasBuiltInTool(name);
@@ -4111,6 +4122,11 @@ export class AgentSession {
 	/** Selects enabled tools, ignoring names absent from the registry. */
 	setActiveToolsByName(toolNames: string[]): Promise<void> {
 		return this.#tools.setActiveToolsByName(toolNames);
+	}
+
+	/** Reconcile the default-off exact-model GPT-5.6 Codex eval profile. */
+	reconcileGpt56CodexProfile(): Promise<void> {
+		return this.#tools.reconcileGpt56CodexProfile();
 	}
 
 	/** Restores an exact top-level versus `xd://` tool partition. */
@@ -4365,6 +4381,7 @@ export class AgentSession {
 	}
 
 	setPlanModeState(state: PlanModeState | undefined): void {
+		const planModeChanged = (this.#planModeState?.enabled === true) !== (state?.enabled === true);
 		this.#planModeState = state;
 		if (state?.enabled) {
 			this.#planReferenceSent = false;
@@ -4375,6 +4392,11 @@ export class AgentSession {
 			// Drop any unconsumed forced decision so a post-plan execution turn
 			// does not inherit a stale `required` tool choice.
 			this.#toolChoiceQueue.removeByLabel("plan-mode-decision");
+		}
+		if (planModeChanged) {
+			void this.reconcileGpt56CodexProfile().catch(error => {
+				this.emitNotice("warning", `Failed to reconcile GPT-5.6 Codex profile: ${String(error)}`, "eval");
+			});
 		}
 	}
 

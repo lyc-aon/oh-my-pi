@@ -1,5 +1,11 @@
 import type { Clipboard, InMemorySnapshotStore } from "@oh-my-pi/hashline";
-import type { AgentOptions, AgentTelemetryConfig, AgentTool } from "@oh-my-pi/pi-agent-core";
+import type {
+	AgentOptions,
+	AgentTelemetryConfig,
+	AgentTool,
+	AgentToolContext,
+	ToolCallContext,
+} from "@oh-my-pi/pi-agent-core";
 import type { FetchImpl, ImageContent, Model, ServiceTierByFamily, ToolChoice } from "@oh-my-pi/pi-ai";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { AsyncJobManager } from "../async/job-manager";
@@ -246,6 +252,12 @@ export interface ToolSession {
 	getAgentId?: () => string | null;
 	/** Look up a registered tool by name (used by the eval js backend's tool bridge). */
 	getToolByName?: (name: string) => AgentTool | undefined;
+	/** Resolve a policy-eligible executable tool for a nested eval call. */
+	getToolForEval?: (name: string) => AgentTool | undefined;
+	/** Tools exposed in an eval-only model's nested catalog. */
+	getToolsCallableFromEval?: () => readonly AgentTool[];
+	/** Build the same execution context used by ordinary top-level tool calls. */
+	getToolContext?: (toolCall?: ToolCallContext) => AgentToolContext | undefined;
 	/** Return whether a built-in tool is active in this turn's tool set. */
 	isToolActive?: (name: string) => boolean;
 	/** Update the active built-in tool predicate when a session changes tools mid-run. */

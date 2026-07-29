@@ -111,6 +111,8 @@ export interface AgentSessionConfig {
 	settings: Settings;
 	/** Whether the caller explicitly requested yolo/auto-approve behavior for this session. */
 	autoApprove?: boolean;
+	/** Whether this unrestricted session may apply the default-off GPT-5.6 Codex eval profile. */
+	gpt56CodexProfileEligible?: boolean;
 	/** Models to cycle through with Ctrl+P (from --models flag). */
 	scopedModels?: Array<{ model: Model; thinkingLevel?: ThinkingLevel }>;
 	/** Initial session thinking selector. */
