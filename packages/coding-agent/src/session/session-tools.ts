@@ -64,7 +64,7 @@ export interface SessionToolsHost {
 
 interface SessionToolsOptions {
 	autoApprove?: boolean;
-	/** Permit the default-off GPT-5.6 model profile in this unrestricted session. */
+	/** Permit the GPT-5.6 model profile in this unrestricted session. */
 	gpt56CodexProfileEligible?: boolean;
 	toolRegistry?: Map<string, AgentTool>;
 	createVibeTools?: () => AgentTool[];

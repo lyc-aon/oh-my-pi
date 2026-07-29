@@ -3549,7 +3549,7 @@ export const SETTINGS_SCHEMA = {
 
 	"eval.gpt56CodexProfile": {
 		type: "boolean",
-		default: false,
+		default: true,
 		ui: {
 			tab: "shell",
 			group: "Eval & Runtimes",

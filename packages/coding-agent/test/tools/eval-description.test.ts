@@ -107,10 +107,10 @@ describe("GPT-5.6 Codex eval profile", () => {
 		}
 	});
 
-	it("keeps the experimental guidance off by default", () => {
+	it("enables the GPT-5.6 guidance by default", () => {
 		const description = new EvalTool(makeSession({ model: CODEX_GPT56_LITE })).description;
 
-		expect(description).not.toContain(POLICY_TEXT);
+		expect(description).toContain(POLICY_TEXT);
 	});
 
 	it("adds bounded read-only guidance for the opted-in active JavaScript eval route", () => {
