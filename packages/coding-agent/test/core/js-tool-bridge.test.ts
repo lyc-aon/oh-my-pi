@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "bun:test";
-import type { AgentTool, AgentToolResult } from "@oh-my-pi/pi-agent-core";
+import type { AgentTool, AgentToolContext, AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { callSessionTool } from "@oh-my-pi/pi-coding-agent/eval/js/tool-bridge";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
@@ -55,6 +55,8 @@ describe("callSessionTool", () => {
 		expect(execute).toHaveBeenCalledWith(
 			expect.stringMatching(/^js-read-/),
 			{ path: "/tmp/demo.txt", [INTENT_FIELD]: "js prelude" },
+			undefined,
+			undefined,
 			undefined,
 		);
 		expect(statuses).toEqual([expect.objectContaining({ op: "read", path: "/tmp/demo.txt", chars: 5 })]);
@@ -144,5 +146,39 @@ describe("callSessionTool", () => {
 		const session = createSession([]);
 
 		await expect(callSessionTool("missing", {}, { session })).rejects.toThrow("Unknown tool from js runtime");
+	});
+
+	it("rejects registry tools that are inactive or excluded by the nested eval policy", async () => {
+		const tool = createTool("read", async () => ({ content: [{ type: "text", text: "secret" }] }));
+		const inactive = createSession([tool]);
+		inactive.isToolActive = () => false;
+		await expect(callSessionTool("read", {}, { session: inactive })).rejects.toThrow(
+			"Tool is not active in this eval session",
+		);
+
+		const excluded = createSession([tool]);
+		excluded.getToolForEval = () => undefined;
+		await expect(callSessionTool("read", {}, { session: excluded })).rejects.toThrow(
+			"Tool is not enabled for this eval session",
+		);
+	});
+
+	it("passes ordinary tool context into nested eval execution", async () => {
+		const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+		const session = createSession([createTool("read", execute)]);
+		const context = { settings: session.settings } as unknown as AgentToolContext;
+		session.getToolContext = vi.fn(() => context);
+
+		await callSessionTool("read", {}, { session });
+
+		expect(execute.mock.calls[0]?.[4]).toBe(context);
+		expect(session.getToolContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				batchId: expect.stringMatching(/^js-read-/),
+				index: 0,
+				total: 1,
+				toolCalls: [expect.objectContaining({ name: "read" })],
+			}),
+		);
 	});
 });

@@ -1706,6 +1706,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			getMnemopiSessionState: () => session?.getMnemopiSessionState(),
 			getAgentId: () => resolvedAgentId,
 			getToolByName: name => session?.getToolByName(name),
+			getToolForEval: name => session?.getToolForEval(name),
+			getToolsCallableFromEval: () => session?.getToolsCallableFromEval() ?? [],
 			agentRegistry,
 			// The global lifecycle releases through AgentRegistry.global(); wiring it
 			// onto a caller-supplied registry would report a cancel while releasing an
@@ -2564,6 +2566,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			autoApprove: options.autoApprove ?? false,
 		});
 		const toolContextStore = new ToolContextStore(getSessionContext);
+		toolSession.getToolContext = toolCall => toolContextStore.getContext(toolCall);
 
 		const registeredTools = restrictToolNames ? [] : extensionRunner.getAllRegisteredTools();
 		const sdkCustomTools =
@@ -3272,6 +3275,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			initialAdvisorCosts,
 			settings,
 			autoApprove: options.autoApprove,
+			gpt56CodexProfileEligible: !restrictToolNames,
 			evalKernelOwnerId,
 			// Defined only for top-level sessions (creation is gated above).
 			// AgentSession uses this to decide whether it may dispose the global
@@ -3365,6 +3369,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			titleSystemPrompt: options.titleSystemPrompt,
 		});
 		hasSession = true;
+		await session.reconcileGpt56CodexProfile();
 		session.yieldQueue.register<McpNotificationEntry>("mcp-notification", {
 			build: buildMcpNotificationBatchMessage,
 		});

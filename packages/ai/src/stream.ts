@@ -1384,6 +1384,29 @@ function resolveOpenAiReasoningEffort<TApi extends Api>(
 	return requireSupportedEffort(model, reasoning);
 }
 
+const GPT_5_6_CODEX_REASONING_NONE_RE = /^gpt-5\.6(?:[.-]|$)/i;
+
+/**
+ * Resolve the reasoning effort for the Codex subscription transport.
+ *
+ * GPT-5.6 supports an explicit `none` wire effort. Without this bridge, the
+ * coding-agent's explicit `off` selector becomes an omitted effort on the
+ * Codex route, which makes the server apply its model default and continue
+ * reasoning while OMP reports "off".
+ *
+ * @internal Exported for focused request-mapping tests.
+ */
+export function resolveOpenAICodexReasoningEffort<TApi extends Api>(
+	model: Model<TApi>,
+	options?: SimpleStreamOptions,
+): Effort | "none" | undefined {
+	const requestModelId = model.requestModelId ?? model.id;
+	if (options?.disableReasoning && GPT_5_6_CODEX_REASONING_NONE_RE.test(requestModelId)) {
+		return "none";
+	}
+	return resolveOpenAiReasoningEffort(model, options);
+}
+
 const castApi = <TApi extends Api>(api: OptionsForApi<TApi>): OptionsForApi<Api> => api as OptionsForApi<Api>;
 
 /**
@@ -1684,7 +1707,7 @@ function mapOptionsForApi<TApi extends Api>(
 		case "openai-codex-responses":
 			return castApi<"openai-codex-responses">({
 				...base,
-				reasoning: resolveOpenAiReasoningEffort(model, options),
+				reasoning: resolveOpenAICodexReasoningEffort(model, options),
 				toolChoice: mapOpenAiToolChoice(options?.toolChoice),
 				serviceTier: options?.serviceTier,
 				preferWebsockets: options?.preferWebsockets,

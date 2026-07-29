@@ -16,7 +16,7 @@ import { resolveMemoryBackend } from "../memory-backend/resolve";
 import { MEMORY_BACKEND_TOOL_NAMES } from "../memory-backend/tool-names";
 import type { MemoryBackendStartOptions } from "../memory-backend/types";
 import xdevMountNoticePrompt from "../prompts/system/xdev-mount-notice.md" with { type: "text" };
-import { usesCodexTaskPrompt } from "../task/prompt-policy";
+import { openAICodexGpt56EvalProfile, usesCodexTaskPrompt } from "../task/prompt-policy";
 import { isMCPToolName, normalizeToolNames } from "../tools/builtin-names";
 import { computerExposureMode } from "../tools/computer/exposure";
 import { wrapToolWithMetaNotice } from "../tools/output-meta";
@@ -64,6 +64,8 @@ export interface SessionToolsHost {
 
 interface SessionToolsOptions {
 	autoApprove?: boolean;
+	/** Permit the default-off GPT-5.6 model profile in this unrestricted session. */
+	gpt56CodexProfileEligible?: boolean;
 	toolRegistry?: Map<string, AgentTool>;
 	createVibeTools?: () => AgentTool[];
 	createComputerTool?: () => Promise<AgentTool | null>;
@@ -171,10 +173,17 @@ interface XdevMountNoticeDetails {
 	removed: string[];
 }
 
+interface Gpt56CodeModeToolSnapshot {
+	toolNames: string[];
+	mountedToolNames: string[];
+}
+
 /** Owns tool registration, presentation, prompt rebuilding, skills, and permissions. */
 export class SessionTools {
 	readonly #host: SessionToolsHost;
 	#autoApprove: boolean;
+	#gpt56CodexProfileEligible: boolean;
+	#gpt56CodeModeToolSnapshot: Gpt56CodeModeToolSnapshot | undefined;
 	#toolRegistry: Map<string, AgentTool>;
 	#createVibeTools: (() => AgentTool[]) | undefined;
 	#createComputerTool: SessionToolsOptions["createComputerTool"];
@@ -212,6 +221,7 @@ export class SessionTools {
 	constructor(host: SessionToolsHost, options: SessionToolsOptions) {
 		this.#host = host;
 		this.#autoApprove = options.autoApprove === true;
+		this.#gpt56CodexProfileEligible = options.gpt56CodexProfileEligible === true;
 		this.#toolRegistry = options.toolRegistry ?? new Map();
 		this.#createVibeTools = options.createVibeTools;
 		this.#createComputerTool = options.createComputerTool;
@@ -292,6 +302,7 @@ export class SessionTools {
 
 	/** Enabled top-level and discoverable tool names. */
 	getEnabledToolNames(): string[] {
+		if (this.#gpt56CodeModeToolSnapshot) return [...this.#gpt56CodeModeToolSnapshot.toolNames];
 		const mountedNames = this.#xdev?.mountedNames;
 		if (!mountedNames || mountedNames.size === 0) return this.getActiveToolNames();
 		return [...this.getActiveToolNames(), ...mountedNames];
@@ -310,6 +321,25 @@ export class SessionTools {
 	/** Looks up a registered tool by name. */
 	getToolByName(name: string): AgentTool | undefined {
 		return this.#toolRegistry.get(name);
+	}
+
+	/** Resolve a policy-eligible, permission-decorated tool for a nested eval call. */
+	getToolForEval(name: string): AgentTool | undefined {
+		if (name === "eval") return undefined;
+		if (this.#gpt56CodeModeToolSnapshot && name === "ask") return undefined;
+		const isBuiltInReadHelper = name === "read" && this.#builtInToolNames.has(name);
+		if (!isBuiltInReadHelper && !this.getEnabledToolNames().includes(name)) return undefined;
+		const tool = this.#toolRegistry.get(name);
+		return tool ? this.#wrapToolForAcpPermission(tool) : undefined;
+	}
+
+	/** Tools advertised inside the Terra/Luna eval-only catalog. */
+	getToolsCallableFromEval(): AgentTool[] {
+		return this.getEnabledToolNames().flatMap(name => {
+			if (name === "eval" || (this.#gpt56CodeModeToolSnapshot && name === "ask")) return [];
+			const tool = this.#toolRegistry.get(name);
+			return tool ? [tool] : [];
+		});
 	}
 
 	/** Whether a registry entry came from a built-in factory. */
@@ -392,7 +422,18 @@ export class SessionTools {
 		const activeModel = this.#host.model();
 		const model = activeModel ? formatModelString(activeModel) : undefined;
 		if (!model || this.#host.settings.get("includeModelInPrompt")) return model;
-		return usesCodexTaskPrompt(model) ? "task-policy:gpt-5.6" : "task-policy:default";
+		const taskPolicy = usesCodexTaskPrompt(model) ? "task-policy:gpt-5.6" : "task-policy:default";
+		const profile =
+			this.#host.settings.get("eval.gpt56CodexProfile") && this.getActiveToolNames().includes("eval")
+				? openAICodexGpt56EvalProfile(activeModel)
+				: null;
+		const evalPolicy =
+			profile === "sol-hybrid"
+				? "eval-policy:gpt-5.6-sol-lite-parallel"
+				: profile === "code-mode-only"
+					? "eval-policy:gpt-5.6-terra-luna-lite-code-mode-only"
+					: "eval-policy:default";
+		return `${taskPolicy};${evalPolicy}`;
 	}
 
 	#logComputerState(message: string, enabled: boolean): void {
@@ -409,6 +450,11 @@ export class SessionTools {
 	async syncAfterModelChange(previousEditMode: EditMode): Promise<void> {
 		const currentEditMode = this.resolveActiveEditMode();
 		const editModeChanged = previousEditMode !== currentEditMode && this.getActiveToolNames().includes("edit");
+		// inspect_image may update the underlying enabled set. Do that before
+		// projecting Terra/Luna so its nested catalog and restoration snapshot
+		// include the post-switch capability.
+		await this.reconcileInspectImageAfterModelChange();
+		await this.reconcileGpt56CodexProfile();
 		// The system prompt selects model-specific policy even when it does not display the model id.
 		const modelChanged = this.#currentPromptModelKey() !== this.#promptModelKey;
 		if (editModeChanged || modelChanged) {
@@ -428,10 +474,6 @@ export class SessionTools {
 		} else if (computerExpected) {
 			this.#logComputerState("Computer tool retained after model change", true);
 		}
-
-		// inspect_image auto mode keys off model image capability, so a model
-		// switch can flip the tool either way.
-		await this.reconcileInspectImageAfterModelChange();
 	}
 
 	/** Enabled MCP tools in their current presentation partition. */
@@ -563,6 +605,23 @@ export class SessionTools {
 	/** Applies an enabled tool set and reconciles its `xd://` partition. */
 	async applyActiveToolsByName(toolNames: string[]): Promise<void> {
 		toolNames = normalizeToolNames(toolNames);
+		const previousGpt56Snapshot = this.#gpt56CodeModeToolSnapshot
+			? {
+					toolNames: [...this.#gpt56CodeModeToolSnapshot.toolNames],
+					mountedToolNames: [...this.#gpt56CodeModeToolSnapshot.mountedToolNames],
+				}
+			: undefined;
+		if (this.#gpt56CodeModeToolSnapshot) {
+			this.#gpt56CodeModeToolSnapshot.toolNames = [...toolNames];
+			this.#gpt56CodeModeToolSnapshot.mountedToolNames = this.#gpt56CodeModeToolSnapshot.mountedToolNames.filter(
+				name => toolNames.includes(name),
+			);
+			if (toolNames.includes("eval")) {
+				toolNames = this.#gpt56CodeModeEntrypoints(toolNames);
+			} else {
+				this.#gpt56CodeModeToolSnapshot = undefined;
+			}
+		}
 		const selectedTools = toolNames.flatMap(name => {
 			const tool = this.#toolRegistry.get(name);
 			return tool ? [{ name, tool }] : [];
@@ -631,12 +690,14 @@ export class SessionTools {
 		} catch (error) {
 			this.#setMountedNames(previousMounted);
 			this.#setActiveToolNames?.(previousActiveToolNames);
+			this.#gpt56CodeModeToolSnapshot = previousGpt56Snapshot;
 			throw error;
 		}
 
 		if (this.#host.isDisposed()) {
 			this.#setMountedNames(previousMounted);
 			this.#setActiveToolNames?.(previousActiveToolNames);
+			this.#gpt56CodeModeToolSnapshot = previousGpt56Snapshot;
 			return;
 		}
 
@@ -649,6 +710,59 @@ export class SessionTools {
 			this.#host.agent.setSystemPrompt(this.#baseSystemPrompt);
 			this.#lastAppliedToolSignature = rebuiltSignature;
 			this.#promptModelKey = this.#currentPromptModelKey();
+		}
+	}
+
+	#gpt56CodeModeEntrypoints(toolNames: readonly string[]): string[] {
+		return toolNames.filter(name => name === "eval" || name === "ask");
+	}
+
+	#gpt56CodeModeExpected(): boolean {
+		return (
+			this.#gpt56CodexProfileEligible &&
+			!this.#host.planModeEnabled() &&
+			this.#host.settings.get("eval.js") &&
+			this.#host.settings.get("eval.gpt56CodexProfile") &&
+			openAICodexGpt56EvalProfile(this.#host.model()) === "code-mode-only"
+		);
+	}
+
+	/**
+	 * Project Terra/Luna's enabled tools under eval while retaining the exact
+	 * underlying selection for nested calls and restoration.
+	 */
+	async reconcileGpt56CodexProfile(): Promise<void> {
+		const expected = this.#gpt56CodeModeExpected();
+		if (expected && !this.#gpt56CodeModeToolSnapshot) {
+			const toolNames = this.getEnabledToolNames();
+			if (!toolNames.includes("eval")) return;
+			const snapshot: Gpt56CodeModeToolSnapshot = {
+				toolNames,
+				mountedToolNames: this.getMountedXdevToolNames(),
+			};
+			this.#gpt56CodeModeToolSnapshot = snapshot;
+			try {
+				await this.applyActiveToolsByName(snapshot.toolNames);
+			} catch (error) {
+				this.#gpt56CodeModeToolSnapshot = undefined;
+				throw error;
+			}
+			this.#host.emitNotice(
+				"info",
+				"GPT-5.6 code-mode-only profile active: ordinary session tools are nested under eval.",
+				"eval",
+			);
+			return;
+		}
+		if (!expected && this.#gpt56CodeModeToolSnapshot) {
+			const snapshot = this.#gpt56CodeModeToolSnapshot;
+			this.#gpt56CodeModeToolSnapshot = undefined;
+			try {
+				await this.setActiveToolPresentation(snapshot.toolNames, snapshot.mountedToolNames);
+			} catch (error) {
+				this.#gpt56CodeModeToolSnapshot = snapshot;
+				throw error;
+			}
 		}
 	}
 
@@ -873,6 +987,9 @@ export class SessionTools {
 		mounted: ReadonlySet<string>,
 		writeSelected: boolean,
 	): Promise<void> {
+		if (this.#gpt56CodeModeToolSnapshot) {
+			this.#gpt56CodeModeToolSnapshot.mountedToolNames = normalized.filter(name => mounted.has(name));
+		}
 		const transportWriteActive =
 			writeSelected &&
 			this.#builtInToolNames.has("write") &&

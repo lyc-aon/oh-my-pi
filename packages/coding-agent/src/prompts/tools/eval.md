@@ -2,6 +2,10 @@ Run one step of code in a persistent kernel. State persists across calls and sub
 
 Work incrementally: imports → define → test → use, each its own cell. Re-run setup ONLY after `reset`, kernel crash.
 Parallelize *within* a cell with `parallel(thunks)`, not by batching.
+{{#if gpt56ParallelPolicy}}{{gpt56ParallelPolicy}}
+{{/if}}
+{{#if gpt56CodeModePolicy}}{{gpt56CodeModePolicy}}
+{{/if}}
 
 {{#if py}}Top-level `await` works; `asyncio.run(…)` raises error.{{/if}}
 {{#if js}}JS runs under **Bun**: globals (`Bun.file`, `Bun.write`, `Bun.$`, `fetch`, `Buffer`) available; top-level `await`/`return` work.{{/if}}

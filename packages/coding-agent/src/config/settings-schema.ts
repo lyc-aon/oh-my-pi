@@ -3577,6 +3577,18 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"eval.gpt56CodexProfile": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "shell",
+			group: "Eval & Runtimes",
+			label: "GPT-5.6 Codex Profile (experimental)",
+			description:
+				"Use exact-model Codex-style eval behavior on OpenAI Codex Responses Lite: hybrid guidance for Sol and eval-only routing for Terra/Luna",
+		},
+	},
+
 	// Runtime knobs (consumed by eval backends and the /python slash command)
 	"python.kernelMode": {
 		type: "enum",
