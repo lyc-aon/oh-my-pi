@@ -368,12 +368,16 @@ describe("executeJs", () => {
 			expect.stringMatching(/^js-read-/),
 			{ path: "artifact://15:raw:1-1400", [INTENT_FIELD]: "js prelude" },
 			expect.any(AbortSignal),
+			undefined,
+			undefined,
 		);
 		expect(execute).toHaveBeenNthCalledWith(
 			2,
 			expect.stringMatching(/^js-read-/),
 			{ path: "artifact://15:raw:1-2", [INTENT_FIELD]: "js prelude" },
 			expect.any(AbortSignal),
+			undefined,
+			undefined,
 		);
 	});
 
@@ -425,6 +429,41 @@ describe("executeJs", () => {
 		expect(execute).toHaveBeenCalledTimes(2);
 		expect(execute.mock.calls[0]?.[1]).toEqual({ path: "package.json", [INTENT_FIELD]: "js prelude" });
 		expect(execute.mock.calls[1]?.[1]).toEqual({ path: "agent://agent-42", [INTENT_FIELD]: "js prelude" });
+	});
+
+	it("consumes text from a live-shaped structured tool.read result", async () => {
+		const execute = vi.fn(
+			async (): Promise<AgentToolResult> => ({
+				content: [{ type: "text", text: "annotated" }],
+				details: { path: "package.json", kind: "tool-result" },
+			}),
+		);
+		const toolSession: ToolSession = {
+			...session,
+			getToolByName: name => (name === "read" ? createTool("read", execute) : undefined),
+		};
+
+		const result = await executeJs(
+			[
+				"const readResult = await tool.read({ path: 'package.json' });",
+				'return typeof readResult === "string" ? readResult : readResult.text;',
+			].join("\n"),
+			{
+				sessionId,
+				session: toolSession,
+				sessionFile,
+			},
+		);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output.trim()).toBe("annotated");
+		expect(execute).toHaveBeenCalledWith(
+			expect.stringMatching(/^js-read-/),
+			{ path: "package.json", [INTENT_FIELD]: "js prelude" },
+			expect.any(AbortSignal),
+			undefined,
+			undefined,
+		);
 	});
 
 	it("auto-displays the final awaited expression result", async () => {

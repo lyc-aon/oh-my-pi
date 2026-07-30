@@ -173,9 +173,9 @@ export interface EvalToolDescriptionOptions {
 	 * `false`/`""` hides `agent()`, and a comma list drives the advertised default.
 	 */
 	spawns?: boolean | string | null;
-	/** Add the opt-in GPT-5.6 Sol Codex Lite concurrency guidance. */
+	/** Add the GPT-5.6 Sol Codex Lite concurrency guidance for an eligible session. */
 	gpt56ParallelPolicy?: boolean;
-	/** Add the opt-in GPT-5.6 Terra/Luna code-mode-only nested tool catalog. */
+	/** Add the GPT-5.6 Terra/Luna code-mode-only nested tool catalog for an eligible session. */
 	gpt56CodeModeTools?: readonly AgentTool[];
 }
 

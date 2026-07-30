@@ -114,7 +114,7 @@
 ### Added
 
 - Added the default-on `eval.gpt56CodexProfile` setting, which mirrors the live Codex GPT-5.6 family split on OpenAI Codex Responses Lite: Sol retains its hybrid tool surface with terse bounded-parallel eval guidance, while Terra and Luna route ordinary enabled tools through an eval-only nested catalog.
-- Nested eval tool calls now retain OMP's configured tool selection, approval, ACP permission, and extension policy instead of executing arbitrary canonical-registry entries without normal context.
+- Nested eval tool calls now retain OMP's configured tool selection, approval, ACP permission, and extension policy instead of executing arbitrary canonical-registry entries without normal context. Their model-facing contract documents the actual string-or-structured result and the `.text` extraction path.
 
 ## [17.1.8] - 2026-07-28
 

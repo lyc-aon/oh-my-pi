@@ -27,7 +27,7 @@ export function openAICodexGpt56EvalProfile(model: Model | undefined): OpenAICod
 	}
 }
 
-/** Whether the opt-in bounded parallel hint applies to the Sol hybrid route. */
+/** Whether the bounded parallel hint applies to the Sol hybrid route. */
 export function usesOpenAICodexGpt56SolLitePrompt(model: Model | undefined): boolean {
 	return openAICodexGpt56EvalProfile(model) === "sol-hybrid";
 }

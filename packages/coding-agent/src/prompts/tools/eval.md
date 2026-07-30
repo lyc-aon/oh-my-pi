@@ -20,8 +20,8 @@ read(path, offset?=1, limit?=None) → str
 write(path, content) → str
 env(key?=None, value?=None) → str | None | dict
 output(*ids, format?="raw", query?=None, offset?=None, limit?=None) → str | dict | list[dict]
-tool.<name>(args) → unknown
-    Invoke any session tool; `args` = its parameter object.
+tool.<name>(args) → str | { text, details?, images?, hasError? }
+    Invoke any session tool; `args` = its parameter object. Structured results use `.text`, never `.content`.
 completion(prompt, model?="default"|"smol"|"slow", system?=None, schema?=None) → str | dict
     Oneshot, stateless (no history/tools). `model`: "smol" fast | "default" session | "slow" most capable. `schema` (JSON-Schema) → parsed object.
 {{#if spawns}}agent(prompt, agent?="{{spawnDefaultAgent}}", label?=None, schema?=None, schema{{#if js}}Mode{{else}}_mode{{/if}}?="permissive", isolated?=None, apply?=None, merge?=None, handle?=False) → str | dict
