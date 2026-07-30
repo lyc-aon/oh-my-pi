@@ -16,16 +16,17 @@ interface ToolBridgeOptions {
 	emitStatus?: (event: JsStatusEvent) => void;
 }
 
-type ToolValue =
-	| string
-	| EvalBudgetResult
-	| EvalConcurrencyResult
-	| {
-			text: string;
-			details?: unknown;
-			images?: Array<{ mimeType: string; data: string }>;
-			hasError?: boolean;
-	  };
+export interface StructuredSessionToolResult {
+	text: string;
+	details?: unknown;
+	images?: Array<{ mimeType: string; data: string }>;
+	hasError?: boolean;
+}
+
+export type SessionToolResult = string | StructuredSessionToolResult;
+
+type ToolValue = SessionToolResult | EvalBudgetResult | EvalConcurrencyResult;
+
 function toolResultHasError(result: AgentToolResult): boolean {
 	if ((result as { isError?: unknown }).isError === true) {
 		return true;
@@ -161,7 +162,7 @@ export async function callSessionTool(name: string, args: unknown, options: Tool
 		if (result.details === undefined && imageBlocks.length === 0 && !hasError) {
 			return text;
 		}
-		const value: Exclude<ToolValue, string> = {
+		const value: StructuredSessionToolResult = {
 			text,
 			details: result.details,
 		};

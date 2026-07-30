@@ -113,7 +113,7 @@ describe("GPT-5.6 Codex eval profile", () => {
 		expect(description).toContain(POLICY_TEXT);
 	});
 
-	it("adds bounded read-only guidance for the opted-in active JavaScript eval route", () => {
+	it("adds bounded read-only guidance for the enabled active JavaScript eval route", () => {
 		const description = new EvalTool(makeSession({ model: CODEX_GPT56_LITE, gpt56CodexProfile: true })).description;
 
 		expect(description).toContain(POLICY_TEXT);
@@ -177,7 +177,7 @@ describe("GPT-5.6 Codex eval profile", () => {
 		expect(description).toContain(POLICY_TEXT);
 	});
 
-	it("renders Terra and Luna's nested tool contracts only on the opted-in code-mode-only route", () => {
+	it("renders Terra and Luna's nested tool contracts only on the enabled code-mode-only route", () => {
 		const nestedBash = {
 			name: "bash",
 			label: "Bash",
@@ -197,6 +197,11 @@ describe("GPT-5.6 Codex eval profile", () => {
 			expect(description).toContain("This model uses eval as its work gateway.");
 			expect(description).toContain("`tool.bash` — Bash");
 			expect(description).toContain("command: string;");
+			expect(description).toContain("type SessionToolResult =");
+			expect(description).toContain('typeof result === "string" ? result : result.text');
+			expect(description).toContain("tool.bash(args:");
+			expect(description).toContain("Promise<SessionToolResult>");
+			expect(description).not.toContain("→ unknown");
 			expect(description).toContain("ordinary OMP approval, permission, and extension policy remains in force");
 			expect(description).not.toContain(POLICY_TEXT);
 		}

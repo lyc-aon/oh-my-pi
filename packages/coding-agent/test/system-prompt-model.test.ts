@@ -282,7 +282,7 @@ describe("AgentSession model-change prompt refresh", () => {
 		expect(session.agent.state.systemPrompt).toEqual(["policy changed"]);
 	});
 
-	it("rebuilds a hidden-model prompt when the opted-in eval policy changes", async () => {
+	it("rebuilds a hidden-model prompt when the GPT-5.6 eval policy changes", async () => {
 		const previousResponsesLite = Bun.env.PI_CODEX_RESPONSES_LITE;
 		delete Bun.env.PI_CODEX_RESPONSES_LITE;
 		try {
