@@ -9,9 +9,11 @@
  * - Responses: JSON objects with `type: "response"`, `command`, `success`, and optional `data`/`error`
  * - Events: AgentSessionEvent objects streamed as they occur
  * - Extension UI: Extension UI requests are emitted, client responds with extension_ui_response
+ * - Remote components: additive component_* / working_message / editor_* frames (Go ompui protocol)
  */
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { isZodSchema, zodToWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
+import type { TUI } from "@oh-my-pi/pi-tui";
 import { $env, readJsonl, Snowflake } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
@@ -19,12 +21,25 @@ import {
 	type ExtensionUIContext,
 	type ExtensionUIDialogOptions,
 	type ExtensionUISelectItem,
+	type ExtensionUiComponent,
 	type ExtensionWidgetOptions,
 	getExtensionUISelectOptionLabel,
+	type KeybindingsManager,
+	type TerminalInputHandler,
 } from "../../extensibility/extensions";
+
 import { buildSkillPromptMessage } from "../../extensibility/skills";
 import { loadSlashCommands } from "../../extensibility/slash-commands";
-import { type Theme, theme } from "../../modes/theme/theme";
+import {
+	getAvailableThemesWithPaths,
+	getCurrentThemeName,
+	getThemeByName,
+	setTheme,
+	setThemeInstance,
+	type Theme,
+	theme,
+} from "../../modes/theme/theme";
+
 import type { AgentSession } from "../../session/agent-session";
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
 import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins";
@@ -33,6 +48,7 @@ import type { EventBus } from "../../utils/event-bus";
 import { initializeExtensions } from "../runtime-init";
 import { isRpcHostToolResult, isRpcHostToolUpdate, RpcHostToolBridge } from "./host-tools";
 import { isRpcHostUriResult, RpcHostUriBridge } from "./host-uris";
+import { type linesToComponent, RpcRemoteUiHost } from "./rpc-remote-ui";
 import { RpcSubagentRegistry, readRpcSubagentTranscript } from "./rpc-subagents";
 import type {
 	RpcCommand,
@@ -46,6 +62,7 @@ import type {
 	RpcResponse,
 	RpcSessionState,
 	RpcSubagentSubscriptionLevel,
+	RpcThemeSyncFrame,
 } from "./rpc-types";
 
 // Re-export types for consumers
@@ -283,6 +300,13 @@ function parseValueDialogResponse(
 }
 
 function shouldEmitRpcTitles(): boolean {
+	const ompTui = $env.OMP_TUI_ACTIVE;
+	if (ompTui) {
+		const normalized = ompTui.trim().toLowerCase();
+		if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+			return true;
+		}
+	}
 	const raw = $env.PI_RPC_EMIT_TITLE;
 	if (!raw) return false;
 	const normalized = raw.trim().toLowerCase();
@@ -291,6 +315,31 @@ function shouldEmitRpcTitles(): boolean {
 
 function isSubagentSubscriptionLevel(value: unknown): value is RpcSubagentSubscriptionLevel {
 	return value === "off" || value === "progress" || value === "events";
+}
+
+/** Build additive theme_sync from the active Theme (name + appearance + palette). */
+export function buildThemeSyncFrame(name: string, id?: string): RpcThemeSyncFrame {
+	const frame: RpcThemeSyncFrame = {
+		v: 1,
+		type: "theme_sync",
+		name,
+		appearance: theme.isLight ? "light" : "dark",
+		palette: {
+			text: theme.getColorHex("text"),
+			muted: theme.getColorHex("muted"),
+			dim: theme.getColorHex("dim"),
+			accent: theme.getColorHex("accent"),
+			success: theme.getColorHex("success"),
+			error: theme.getColorHex("error"),
+			warning: theme.getColorHex("warning"),
+			thinking: theme.getColorHex("thinkingText"),
+			code: theme.getColorHex("mdCode"),
+			border: theme.getColorHex("border"),
+			user: theme.getColorHex("userMessageText"),
+		},
+	};
+	if (id !== undefined) frame.id = id;
+	return frame;
 }
 
 export function requestRpcEditor(
@@ -306,8 +355,10 @@ export function requestRpcEditor(
 	const id = Snowflake.next() as string;
 	const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
 	let settled = false;
+	let timeoutId: NodeJS.Timeout | undefined;
 
 	const cleanup = () => {
+		clearTimeout(timeoutId);
 		dialogOptions?.signal?.removeEventListener("abort", onAbort);
 		pendingRequests.delete(id);
 	};
@@ -334,6 +385,18 @@ export function requestRpcEditor(
 	};
 
 	dialogOptions?.signal?.addEventListener("abort", onAbort, { once: true });
+	if (dialogOptions?.timeout !== undefined) {
+		timeoutId = setTimeout(() => {
+			output({
+				type: "extension_ui_request",
+				id: Snowflake.next() as string,
+				method: "cancel",
+				targetId: id,
+			} as RpcExtensionUIRequest);
+			dialogOptions.onTimeout?.();
+			finish(undefined);
+		}, dialogOptions.timeout);
+	}
 	pendingRequests.set(id, {
 		resolve: response => {
 			if ("cancelled" in response && response.cancelled) {
@@ -399,6 +462,7 @@ export async function runRpcMode(
 	const hostToolBridge = new RpcHostToolBridge(output);
 	const hostUriBridge = new RpcHostUriBridge(output);
 	const subagentRegistry = eventBus ? new RpcSubagentRegistry(eventBus, output) : undefined;
+	const remoteUi = new RpcRemoteUiHost(output);
 
 	// Shutdown request flag (wrapped in object to allow mutation with const)
 	const shutdownState = { requested: false };
@@ -410,6 +474,7 @@ export async function runRpcMode(
 		constructor(
 			private pendingRequests: Map<string, PendingExtensionRequest>,
 			private output: (obj: RpcResponse | RpcExtensionUIRequest | object) => void,
+			private remote: RpcRemoteUiHost,
 		) {}
 
 		/** Helper for dialog methods with signal/timeout support */
@@ -426,12 +491,18 @@ export async function runRpcMode(
 			let timeoutId: NodeJS.Timeout | undefined;
 
 			const cleanup = () => {
-				if (timeoutId) clearTimeout(timeoutId);
+				clearTimeout(timeoutId);
 				opts?.signal?.removeEventListener("abort", onAbort);
 				this.pendingRequests.delete(id);
 			};
 
 			const onAbort = () => {
+				this.output({
+					type: "extension_ui_request",
+					id: Snowflake.next() as string,
+					method: "cancel",
+					targetId: id,
+				} as RpcExtensionUIRequest);
 				cleanup();
 				resolve(defaultValue);
 			};
@@ -439,6 +510,12 @@ export async function runRpcMode(
 
 			if (opts?.timeout !== undefined) {
 				timeoutId = setTimeout(() => {
+					this.output({
+						type: "extension_ui_request",
+						id: Snowflake.next() as string,
+						method: "cancel",
+						targetId: id,
+					} as RpcExtensionUIRequest);
 					opts.onTimeout?.();
 					cleanup();
 					resolve(defaultValue);
@@ -503,13 +580,13 @@ export async function runRpcMode(
 			);
 		}
 
-		onTerminalInput(): () => void {
-			// Raw terminal input not supported in RPC mode
-			return () => {};
+		onTerminalInput(handler: TerminalInputHandler): () => void {
+			// Go owns the TTY. We only register ordered listeners and tell the host
+			// via terminal_input_subscription (0↔1) when it should forward keys.
+			return this.remote.addTerminalInputListener(handler);
 		}
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {
-			// Fire and forget - no response needed
 			this.output({
 				type: "extension_ui_request",
 				id: Snowflake.next() as string,
@@ -520,7 +597,6 @@ export async function runRpcMode(
 		}
 
 		setStatus(key: string, text: string | undefined): void {
-			// Fire and forget - no response needed
 			this.output({
 				type: "extension_ui_request",
 				id: Snowflake.next() as string,
@@ -530,31 +606,87 @@ export async function runRpcMode(
 			} as RpcExtensionUIRequest);
 		}
 
-		setWorkingMessage(_message?: string): void {
-			// Not supported in RPC mode
+		setWorkingMessage(message?: string): void {
+			this.remote.emitWorkingMessage(message);
 		}
 
 		setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
-			// Only support string arrays in RPC mode - factory functions are ignored
+			const placement = options?.placement ?? "aboveEditor";
+			// String-array widgets: keep historical setWidget extension_ui_request.
 			if (content === undefined || Array.isArray(content)) {
+				// Clear any prior factory widget for this key.
+				this.remote.setWidgetFactory(key, undefined, placement);
 				this.output({
 					type: "extension_ui_request",
 					id: Snowflake.next() as string,
 					method: "setWidget",
 					widgetKey: key,
 					widgetLines: content as string[] | undefined,
-					widgetPlacement: options?.placement,
+					widgetPlacement: placement,
 				} as RpcExtensionUIRequest);
+				return;
 			}
-			// Component factories are not supported in RPC mode - would need TUI access
+			if (typeof content === "function") {
+				// Component factory → stable remote component instance.
+				// Clear any prior string-array widget on the historical path.
+				this.output({
+					type: "extension_ui_request",
+					id: Snowflake.next() as string,
+					method: "setWidget",
+					widgetKey: key,
+					widgetLines: undefined,
+					widgetPlacement: placement,
+				} as RpcExtensionUIRequest);
+				try {
+					this.remote.setWidgetFactory(
+						key,
+						content as (tui: unknown, theme: Theme) => ReturnType<typeof linesToComponent>,
+						placement,
+					);
+				} catch (err) {
+					this.output({
+						type: "extension_error",
+						extensionPath: "rpc-ui",
+						event: "setWidget",
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+				return;
+			}
 		}
 
-		setFooter(_factory: unknown): void {
-			// Custom footer not supported in RPC mode - requires TUI access
+		setFooter(factory: unknown): void {
+			try {
+				this.remote.setFooterFactory(
+					typeof factory === "function"
+						? (factory as (tui: unknown, theme: Theme) => ReturnType<typeof linesToComponent>)
+						: undefined,
+				);
+			} catch (err) {
+				this.output({
+					type: "extension_error",
+					extensionPath: "rpc-ui",
+					event: "setFooter",
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
 		}
 
-		setHeader(_factory: unknown): void {
-			// Custom header not supported in RPC mode - requires TUI access
+		setHeader(factory: unknown): void {
+			try {
+				this.remote.setHeaderFactory(
+					typeof factory === "function"
+						? (factory as (tui: unknown, theme: Theme) => ReturnType<typeof linesToComponent>)
+						: undefined,
+				);
+			} catch (err) {
+				this.output({
+					type: "extension_error",
+					extensionPath: "rpc-ui",
+					event: "setHeader",
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
 		}
 
 		setTitle(title: string): void {
@@ -568,30 +700,62 @@ export async function runRpcMode(
 			} as RpcExtensionUIRequest);
 		}
 
-		async custom(): Promise<never> {
-			// Custom UI not supported in RPC mode
-			return undefined as never;
+		async custom<T>(
+			factory: (
+				tui: TUI,
+				theme: Theme,
+				keybindings: KeybindingsManager,
+				done: (result: T) => void,
+			) => ExtensionUiComponent | Promise<ExtensionUiComponent>,
+			options?: { overlay?: boolean },
+		): Promise<T> {
+			try {
+				return await this.remote.mountCustom<T>(factory, options);
+			} catch (err) {
+				this.output({
+					type: "extension_error",
+					extensionPath: "rpc-ui",
+					event: "custom",
+					error: err instanceof Error ? err.message : String(err),
+				});
+				return undefined as T;
+			}
 		}
 
 		pasteToEditor(text: string): void {
-			// Paste handling not supported in RPC mode - falls back to setEditorText
-			this.setEditorText(text);
+			// Local splice at cached cursor; emit additive paste only (no set_editor_text —
+			// that would replace on Go and double-apply with editor_update paste).
+			this.remote.pasteEditorTextLocal(text);
+			this.output({
+				v: 1,
+				type: "editor_update",
+				op: "paste",
+				text,
+			});
 		}
 
 		setEditorText(text: string): void {
-			// Fire and forget - host can implement editor control
+			this.remote.setEditorTextLocal(text);
+			// Historical bare JSONL path (hosts that already implement this).
 			this.output({
 				type: "extension_ui_request",
 				id: Snowflake.next() as string,
 				method: "set_editor_text",
 				text,
 			} as RpcExtensionUIRequest);
+			// Additive editor_update for Go protocol peers.
+			this.output({
+				v: 1,
+				type: "editor_update",
+				op: "set_text",
+				text,
+			});
 		}
 
 		getEditorText(): string {
-			// Synchronous method can't wait for RPC response
-			// Host should track editor state locally if needed
-			return "";
+			// Sync API cannot await host round-trip — return last-known cache.
+			// Fresh reads: host sends editor_state / answers editor_query.
+			return this.remote.getEditorTextSync();
 		}
 
 		async editor(
@@ -607,37 +771,63 @@ export async function runRpcMode(
 			return theme;
 		}
 
-		getAllThemes(): Promise<{ name: string; path: string | undefined }[]> {
-			return Promise.resolve([]);
+		async getAllThemes(): Promise<{ name: string; path: string | undefined }[]> {
+			return (await getAvailableThemesWithPaths()).map(t => ({ name: t.name, path: t.path }));
 		}
 
-		getTheme(_name: string): Promise<Theme | undefined> {
-			return Promise.resolve(undefined);
+		getTheme(name: string): Promise<Theme | undefined> {
+			return getThemeByName(name);
 		}
 
-		setTheme(_theme: string | Theme): Promise<{ success: boolean; error?: string }> {
-			// Theme switching not supported in RPC mode
-			return Promise.resolve({ success: false, error: "Theme switching not supported in RPC mode" });
+		async setTheme(themeArg: string | Theme): Promise<{ success: boolean; error?: string }> {
+			if (typeof themeArg === "string") {
+				const result = await setTheme(themeArg, false);
+				// theme_sync only on successful string set — never on failure/fallback.
+				if (result.success) {
+					const name = getCurrentThemeName() ?? themeArg;
+					this.remote.invalidateAll();
+					this.output(buildThemeSyncFrame(name));
+				}
+				return result;
+			}
+			// Direct Theme object: install instance and sync resolved palette.
+			setThemeInstance(themeArg);
+			this.remote.invalidateAll();
+			this.output(buildThemeSyncFrame("<in-memory>"));
+			return { success: true };
 		}
 
 		getToolsExpanded() {
-			// Tool expansion not supported in RPC mode - no TUI
-			return false;
+			return this.remote.toolsExpanded;
 		}
 
-		setToolsExpanded(_expanded: boolean) {
-			// Tool expansion not supported in RPC mode - no TUI
+		setToolsExpanded(expanded: boolean) {
+			this.remote.setToolsExpanded(expanded);
+			this.remote.emitToolsExpanded();
 		}
 
-		setEditorComponent(): void {
-			// Custom editor components not supported in RPC mode
+		setEditorComponent(factory?: unknown): void {
+			try {
+				this.remote.setEditorComponentFactory(
+					typeof factory === "function"
+						? (factory as Parameters<RpcRemoteUiHost["setEditorComponentFactory"]>[0])
+						: undefined,
+				);
+			} catch (err) {
+				this.output({
+					type: "extension_error",
+					extensionPath: "rpc-ui",
+					event: "setEditorComponent",
+					error: err instanceof Error ? err.message : String(err),
+				});
+			}
 		}
 	}
 
 	// Wire up UI context for tool execution (ask tool, etc.) and extensions.
 	// A single shared instance routes all responses received on stdin to the
 	// correct waiting promise regardless of which code path created the request.
-	const rpcUiContext = new RpcExtensionUIContext(pendingExtensionRequests, output);
+	const rpcUiContext = new RpcExtensionUIContext(pendingExtensionRequests, output, remoteUi);
 	setToolUIContext?.(rpcUiContext, true);
 
 	// Set up extensions with RPC-based UI context
@@ -646,6 +836,7 @@ export async function runRpcMode(
 			output(error(undefined, action, err.message));
 		},
 		reportRuntimeError: err => {
+			remoteUi.disposeOnExtensionError();
 			output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
 		},
 		onShutdown: () => {
@@ -1045,7 +1236,7 @@ export async function runRpcMode(
 				if (!knownProvider) {
 					return error(id, "login", `Unknown OAuth provider: ${command.providerId}`);
 				}
-				const uiCtx = new RpcExtensionUIContext(pendingExtensionRequests, output);
+				const uiCtx = new RpcExtensionUIContext(pendingExtensionRequests, output, remoteUi);
 				// Track whether onAuth has fired. Providers that use OAuthCallbackFlow
 				// always call onAuth first (emit browser URL), then onManualCodeInput as
 				// a fallback. Providers that require interactive input (API-key paste,
@@ -1110,6 +1301,16 @@ export async function runRpcMode(
 			await session.extensionRunner.emit({ type: "session_shutdown" });
 		}
 
+		// Reject pending dialogs and tear down remote components before exit.
+		for (const [id, pending] of pendingExtensionRequests) {
+			pendingExtensionRequests.delete(id);
+			pending.reject(new Error("RPC shutdown"));
+		}
+		remoteUi.disposeAll("RPC shutdown");
+		hostToolBridge.rejectAllPending("RPC shutdown");
+		hostUriBridge.clear("RPC shutdown");
+		subagentRegistry?.dispose();
+
 		process.exit(0);
 	}
 
@@ -1123,6 +1324,22 @@ export async function runRpcMode(
 				if (pending) {
 					pending.resolve(response);
 				}
+				continue;
+			}
+
+			// theme_query lives outside RpcRemoteUiHost (needs getCurrentThemeName).
+			// Dispatch before RpcCommand so old clients that never send it are unchanged.
+			if (parsed && typeof parsed === "object" && "type" in parsed && parsed.type === "theme_query") {
+				const id = "id" in parsed && typeof parsed.id === "string" ? parsed.id : undefined;
+				const name = getCurrentThemeName() ?? "dark";
+				output(buildThemeSyncFrame(name, id));
+				continue;
+			}
+
+			// Additive remote-component / editor / working / terminal_input frames.
+			// Historical clients never send these; unknown types still fall through.
+			// Must run before RpcCommand so new frame types are not treated as commands.
+			if (remoteUi.handleIncoming(parsed)) {
 				continue;
 			}
 
@@ -1155,6 +1372,11 @@ export async function runRpcMode(
 	}
 
 	// stdin closed — RPC client is gone, exit cleanly
+	for (const [id, pending] of pendingExtensionRequests) {
+		pendingExtensionRequests.delete(id);
+		pending.reject(new Error("RPC client disconnected"));
+	}
+	remoteUi.disposeAll("RPC client disconnected");
 	hostToolBridge.rejectAllPending("RPC client disconnected before host tool execution completed");
 	hostUriBridge.clear("RPC client disconnected before host URI request completed");
 	subagentRegistry?.dispose();

@@ -96,14 +96,18 @@ async function runCommand(command: string[], cwd: string, env: NodeJS.ProcessEnv
 async function embedNative(target: BinaryTarget): Promise<void> {
 	if (isDryRun) {
 		console.log(`DRY RUN bun --cwd=packages/natives run embed:native [${target.platform}/${target.arch}]`);
+		console.log(`DRY RUN bun --cwd=packages/coding-agent scripts/embed-omp-tui.ts [${target.platform}/${target.arch}]`);
 		return;
 	}
 
-	await runCommand(["bun", "--cwd=packages/natives", "run", "embed:native"], repoRoot, {
+	const targetEnv = {
 		...Bun.env,
 		TARGET_PLATFORM: target.platform,
 		TARGET_ARCH: target.arch,
-	});
+	};
+	await runCommand(["bun", "--cwd=packages/natives", "run", "embed:native"], repoRoot, targetEnv);
+	// Cross-build omp-tui for this target and embed it. Hard-fail if missing.
+	await runCommand(["bun", "--cwd=packages/coding-agent", "scripts/embed-omp-tui.ts"], repoRoot, targetEnv);
 }
 
 async function buildBinary(target: BinaryTarget): Promise<void> {
@@ -167,6 +171,7 @@ async function generateBundle(): Promise<void> {
 async function resetArtifacts(): Promise<void> {
 	if (isDryRun) {
 		console.log("DRY RUN bun --cwd=packages/natives run embed:native --reset");
+		console.log("DRY RUN bun --cwd=packages/coding-agent scripts/embed-omp-tui.ts --reset");
 		console.log("DRY RUN bun --cwd=packages/stats scripts/generate-client-bundle.ts --reset");
 		console.log("DRY RUN bun --cwd=packages/mechanism scripts/generate-client-bundle.ts --reset");
 		console.log("DRY RUN bun --cwd=packages/home scripts/generate-client-bundle.ts --reset");
@@ -175,6 +180,7 @@ async function resetArtifacts(): Promise<void> {
 		return;
 	}
 	await runCommand(["bun", "--cwd=packages/natives", "run", "embed:native", "--reset"], repoRoot);
+	await runCommand(["bun", "--cwd=packages/coding-agent", "scripts/embed-omp-tui.ts", "--reset"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/stats", "scripts/generate-client-bundle.ts", "--reset"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/mechanism", "scripts/generate-client-bundle.ts", "--reset"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/home", "scripts/generate-client-bundle.ts", "--reset"], repoRoot);

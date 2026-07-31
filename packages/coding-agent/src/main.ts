@@ -51,6 +51,7 @@ import { ExtensionRunner } from "./extensibility/extensions/runner";
 import type { ExtensionUIContext } from "./extensibility/extensions/types";
 import { scheduleMarketplaceAutoUpdate } from "./extensibility/plugins/marketplace-auto-update";
 import type { MCPManager } from "./mcp";
+import { tryLaunchGoTui } from "./modes/go-tui/launch";
 import { InteractiveMode } from "./modes/interactive-mode";
 import type { PrintModeOptions } from "./modes/print-mode";
 import { CURRENT_SETUP_VERSION } from "./modes/setup-version";
@@ -1047,6 +1048,22 @@ export async function runRootCommand(
 	const pipedInput = isProtocolMode ? undefined : await logger.time("readPipedInput", readPipedInput);
 	const autoPrint = pipedInput !== undefined && !parsedArgs.print && parsedArgs.mode === undefined;
 	const isInteractive = !parsedArgs.print && !autoPrint && parsedArgs.mode === undefined;
+
+	// Bun launcher → Go frontend → Bun rpc-ui core. Handoff before heavy interactive
+	// startup when a real TTY is present. Recursion guard / PI_TUI_FRONTEND=typescript
+	// keep the existing TS InteractiveMode path.
+	if (isInteractive && process.stdin.isTTY === true && process.stdout.isTTY === true) {
+		const goDecision = await tryLaunchGoTui({
+			userArgs: rawArgs,
+			isInteractiveCandidate: true,
+			coreCwd: cwd,
+			autoResizeImages: settingsInstance.get("images.autoResize"),
+		});
+		if (goDecision.action === "handoff") {
+			stopStartupWatchdog();
+			process.exit(goDecision.exitCode);
+		}
+	}
 
 	// Initialize discovery system with settings for provider persistence
 	logger.time("initializeWithSettings", initializeWithSettings, settingsInstance);

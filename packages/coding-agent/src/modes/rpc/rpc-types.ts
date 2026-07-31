@@ -481,6 +481,389 @@ export type RpcExtensionUIResponse =
 	| { type: "extension_ui_response"; id: string; cancelled: true; timedOut?: boolean };
 
 // ============================================================================
+// Remote component + editor/working frames (additive; Go ompui/protocol)
+// Bare JSONL — no hello required. Historical clients ignore unknown types.
+// ============================================================================
+
+/** Protocol major mirrored from Go ompui/protocol.Major. */
+export const RPC_FRONTEND_PROTOCOL_V = 1 as const;
+
+export type RpcComponentSlot =
+	| "overlay"
+	| "footer"
+	| "header"
+	| "editor"
+	| "widget_above"
+	| "widget_below"
+	| "tool_call"
+	| "tool_result"
+	| "custom";
+
+/** Bun→Go: open a remote component session (ComponentOpenPayload). */
+export interface RpcComponentOpenFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_open";
+	id?: string;
+	componentId: string;
+	slot?: RpcComponentSlot;
+	kind?: string;
+	key?: string;
+	props?: unknown;
+	wantsKeyRelease?: boolean;
+}
+
+/** Go→Bun: request render at width (ComponentRenderPayload). */
+export interface RpcComponentRenderFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_render";
+	id?: string;
+	componentId: string;
+	width: number;
+	height?: number;
+	/** Full terminal geometry for OverlayOptions.visible(termWidth, termHeight). */
+	terminalWidth?: number;
+	terminalHeight?: number;
+	generation?: number;
+}
+
+/** Bun→Go: ANSI row render result (ComponentResultPayload). */
+export interface RpcComponentResultFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_result";
+	id?: string;
+	componentId: string;
+	generation?: number;
+	lines: string[];
+	cursorCol?: number;
+	cursorRow?: number;
+	liveRegionStart?: number;
+	commitSafeEnd?: number;
+	snapshotSafeEnd?: number;
+	error?: string;
+}
+
+/** Structured mouse payload accepted on component_input (assignment extension). */
+export interface RpcComponentMouseInput {
+	button?: number;
+	col?: number;
+	row?: number;
+	/** Alias for row. */
+	line?: number;
+	release?: boolean;
+	wheel?: -1 | 1 | null;
+	motion?: boolean;
+}
+
+/**
+ * Go→Bun: forward key/paste/mouse/raw input (ComponentInputPayload + extras).
+ * `data`/`text` match Go; `key`/`paste`/`mouse` are additive convenience fields.
+ */
+export interface RpcComponentInputFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_input";
+	id?: string;
+	componentId: string;
+	/** Raw bytes (base64 string or number[] when present). */
+	data?: string | number[];
+	/** UTF-8 convenience form from Go. */
+	text?: string;
+	/** Convenience: single key / CSI sequence. */
+	key?: string;
+	/** Convenience: paste body (wrapped in bracketed-paste by Bun). */
+	paste?: string;
+	/** Convenience: structured mouse event. */
+	mouse?: RpcComponentMouseInput;
+}
+
+/** Bun→Go: input handling outcome (handled/dirty flags). */
+export interface RpcComponentInputResultFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_input_result";
+	id?: string;
+	componentId: string;
+	handled: boolean;
+	dirty: boolean;
+	error?: string;
+}
+
+/** Either direction: pixels stale (ComponentInvalidatePayload). */
+export interface RpcComponentInvalidateFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_invalidate";
+	id?: string;
+	componentId: string;
+}
+
+/** Either direction: tear down session (ComponentDisposePayload). */
+export interface RpcComponentDisposeFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_dispose";
+	id?: string;
+	componentId: string;
+}
+
+/** Go→Bun: focus gain/loss (ComponentFocusPayload). */
+export interface RpcComponentFocusFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_focus";
+	id?: string;
+	componentId: string;
+	focused: boolean;
+}
+
+/** Bun→Go: set/clear working message (WorkingMessagePayload). */
+export interface RpcWorkingMessageFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "working_message";
+	id?: string;
+	message?: string;
+	clear?: boolean;
+}
+
+/** Bun→Go or Go→Bun: editor buffer snapshot (EditorStatePayload). */
+export interface RpcEditorStateFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "editor_state";
+	id?: string;
+	text: string;
+	/** Absolute UTF-16 code-unit offset, matching JavaScript string indexing. */
+	cursor?: number;
+	/** Selection endpoint in the same UTF-16 code-unit coordinate space. */
+	selectionEnd?: number;
+	placeholder?: string;
+}
+
+/** Go→Bun: request editor snapshot (EditorQueryPayload). */
+export interface RpcEditorQueryFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "editor_query";
+	id?: string;
+}
+
+/** Go→Bun: mutate editor buffer (EditorUpdatePayload). */
+export interface RpcEditorUpdateFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "editor_update";
+	id?: string;
+	op?: "set_text" | "paste" | "clear" | "set_cursor";
+	text?: string;
+	/** Absolute UTF-16 code-unit offset, matching JavaScript string indexing. */
+	cursor?: number;
+	/** Selection endpoint in the same UTF-16 code-unit coordinate space. */
+	selectionEnd?: number;
+}
+
+/** Absolute cells or percent string (e.g. "50%"), matching TUI SizeValue. */
+export type RpcOverlaySizeValue = number | string;
+
+/** Allowed overlay anchors (matches pi-tui OverlayAnchor). */
+export type RpcOverlayAnchor =
+	| "center"
+	| "top-left"
+	| "top-right"
+	| "bottom-left"
+	| "bottom-right"
+	| "top-center"
+	| "bottom-center"
+	| "left-center"
+	| "right-center";
+
+/** Uniform number or per-side inset object. */
+export type RpcOverlayMargin =
+	| number
+	| {
+			top?: number;
+			right?: number;
+			bottom?: number;
+			left?: number;
+	  };
+
+/** Bun→Go: mount overlay chrome (OverlayMountPayload + OverlayOptions fields). */
+export interface RpcOverlayMountFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "overlay_mount";
+	id?: string;
+	overlayId: string;
+	componentId?: string;
+	mode?: "modal" | "alt_screen" | "inline";
+	title?: string;
+	zIndex?: number;
+	/** Width in cells or percent string. */
+	width?: RpcOverlaySizeValue;
+	/** Minimum width in cells. */
+	minWidth?: number;
+	/** Max height in rows or percent string. */
+	maxHeight?: RpcOverlaySizeValue;
+	/** Anchor point (default center on host when omitted/invalid). */
+	anchor?: RpcOverlayAnchor;
+	/** Horizontal offset from anchor (positive = right). */
+	offsetX?: number;
+	/** Vertical offset from anchor (positive = down). */
+	offsetY?: number;
+	/** Explicit row: absolute or percent from top. */
+	row?: RpcOverlaySizeValue;
+	/** Explicit col: absolute or percent from left. */
+	col?: RpcOverlaySizeValue;
+	/** Uniform margin number or {top,right,bottom,left}. */
+	margin?: RpcOverlayMargin;
+	/** Borrow alt screen while topmost (also mode=alt_screen). */
+	fullscreen?: boolean;
+}
+
+/** Bun→Go: patch overlay chrome / visibility without remounting. */
+export interface RpcOverlayUpdateFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "overlay_update";
+	id?: string;
+	overlayId: string;
+	/** mode=hidden → SetHidden(true); modal/alt_screen/inline → unhide. */
+	mode?: "modal" | "alt_screen" | "inline" | "hidden";
+	title?: string;
+	zIndex?: number;
+}
+
+/** Either direction: unmount overlay (OverlayUnmountPayload). */
+export interface RpcOverlayUnmountFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "overlay_unmount";
+	id?: string;
+	overlayId: string;
+}
+
+/** Bun→Go: focus request for a component this side owns (not host-forced). */
+export interface RpcComponentFocusRequestFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "component_focus_request";
+	id?: string;
+	componentId: string;
+	/** Desired focus state; defaults to true when omitted. */
+	focused?: boolean;
+}
+
+/**
+ * Bun→Go: whether any extension terminal-input listeners are registered.
+ * Emitted only on 0↔1 transitions so the host can stop/start key forwarding.
+ */
+export interface RpcTerminalInputSubscriptionFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "terminal_input_subscription";
+	id?: string;
+	/** True when at least one listener is active. */
+	active: boolean;
+}
+
+/**
+ * Go→Bun: forward a raw terminal input chunk to registered onTerminalInput listeners.
+ * Host should only send while subscription.active is true.
+ */
+export interface RpcTerminalInputFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "terminal_input";
+	/** Correlation id echoed on terminal_input_result. */
+	id: string;
+	/** Raw bytes (base64 string or number[] when present). */
+	data?: string | number[];
+	/** UTF-8 convenience form from Go. */
+	text?: string;
+}
+
+/**
+ * Bun→Go: outcome of running terminal-input listeners in registration order.
+ * `consume:true` means input must not reach the normal focused component path.
+ * `data` is the (possibly transformed) payload when not fully consumed.
+ */
+export interface RpcTerminalInputResultFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "terminal_input_result";
+	id: string;
+	consume: boolean;
+	data?: string;
+	error?: string;
+}
+
+/** Bun→Go (or reply to theme_query): active theme name + optional appearance/palette. */
+export type RpcThemeAppearance = "dark" | "light";
+
+/** Semantic hex fields matching Go view.Palette (strict #RRGGBB on apply). */
+export interface RpcThemeSyncPalette {
+	text?: string;
+	muted?: string;
+	dim?: string;
+	accent?: string;
+	success?: string;
+	error?: string;
+	warning?: string;
+	thinking?: string;
+	code?: string;
+	border?: string;
+	user?: string;
+}
+
+export interface RpcThemeSyncFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "theme_sync";
+	id?: string;
+	name: string;
+	appearance?: RpcThemeAppearance;
+	palette?: RpcThemeSyncPalette;
+}
+
+/** Go→Bun: ask for current theme name (reply with theme_sync). */
+export interface RpcThemeQueryFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "theme_query";
+	id?: string;
+}
+
+/**
+ * Either direction: tool-card expansion state.
+ * Host may push `expanded` or set `query:true` to read the Bun cache.
+ */
+export interface RpcToolsExpandedFrame {
+	v?: typeof RPC_FRONTEND_PROTOCOL_V;
+	type: "tools_expanded";
+	id?: string;
+	expanded?: boolean;
+	/** When true, Bun replies with tools_expanded carrying the cached expanded flag. */
+	query?: boolean;
+}
+
+/** Host→Bun remote UI request union (stdin). */
+export type RpcRemoteUiInboundFrame =
+	| RpcComponentRenderFrame
+	| RpcComponentInputFrame
+	| RpcComponentDisposeFrame
+	| RpcComponentFocusFrame
+	| RpcComponentOpenFrame
+	| RpcComponentInvalidateFrame
+	| RpcEditorQueryFrame
+	| RpcEditorUpdateFrame
+	| RpcEditorStateFrame
+	| RpcWorkingMessageFrame
+	| RpcOverlayUnmountFrame
+	| RpcTerminalInputFrame
+	| RpcThemeQueryFrame
+	| RpcToolsExpandedFrame;
+
+/** Bun→host remote UI emit union (stdout). */
+export type RpcRemoteUiOutboundFrame =
+	| RpcComponentOpenFrame
+	| RpcComponentResultFrame
+	| RpcComponentInvalidateFrame
+	| RpcComponentInputResultFrame
+	| RpcComponentDisposeFrame
+	| RpcWorkingMessageFrame
+	| RpcEditorStateFrame
+	| RpcOverlayMountFrame
+	| RpcOverlayUpdateFrame
+	| RpcOverlayUnmountFrame
+	| RpcComponentFocusRequestFrame
+	| RpcTerminalInputSubscriptionFrame
+	| RpcTerminalInputResultFrame
+	| RpcThemeSyncFrame
+	| RpcToolsExpandedFrame;
+
+// ============================================================================
 // Helper type for extracting command types
 // ============================================================================
 

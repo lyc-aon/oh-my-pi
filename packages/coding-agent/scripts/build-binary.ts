@@ -46,6 +46,9 @@ async function main(): Promise<void> {
 		await runCommand(["bun", "--cwd=../home", "scripts/generate-client-bundle.ts", "--generate"]);
 		await runCommand(["bun", "scripts/generate-docs-index.ts", "--generate"]);
 		await runCommand(["bun", "--cwd=../natives", "run", "embed:native"]);
+		// Cross-build + embed matching omp-tui before bun --compile. Fails hard if
+		// the Go frontend artifact is missing — never ship a silent TS-only binary.
+		await runCommand(["bun", "scripts/embed-omp-tui.ts"]);
 		await runCommand(["bun", "scripts/embed-mupdf-wasm.ts", "--generate"]);
 		try {
 			const buildEnv = shouldAdhocSignDarwinBinary() ? { ...Bun.env, BUN_NO_CODESIGN_MACHO_BINARY: "1" } : Bun.env;
@@ -99,6 +102,7 @@ async function main(): Promise<void> {
 			}
 		} finally {
 			await runCommand(["bun", "scripts/embed-mupdf-wasm.ts", "--reset"]);
+			await runCommand(["bun", "scripts/embed-omp-tui.ts", "--reset"]);
 			await runCommand(["bun", "--cwd=../natives", "run", "embed:native", "--reset"]);
 		}
 	} finally {
