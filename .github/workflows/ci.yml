@@ -41,7 +41,7 @@ env:
    # The Go TUI is a separately versioned source dependency. Release and package
    # jobs check out this exact commit; embed-omp-tui verifies HEAD before build.
    RATATUI_GO_REPOSITORY: "lyc-aon/ratatui-go"
-   RATATUI_GO_REVISION: "1efca52a7b00499ceb183c023b1565137371f879"
+   RATATUI_GO_REVISION: "d880ecd687107ee2b770e414ad2c60df9a2d3d4c"
    RATATUI_GO_VERSION: "1.26.5"
 
 permissions:
