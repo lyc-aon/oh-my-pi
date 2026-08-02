@@ -790,15 +790,75 @@ async function handleCredentialsCheck(storage: AuthStorage, signal: AbortSignal)
 	return json(200, { generatedAt: Date.now(), credentials });
 }
 
-function handleModelsList(opts: AuthGatewayBootOptions): Response {
+const CODEX_GATEWAY_BASE_INSTRUCTIONS =
+	"You are a coding agent. Follow the user's instructions and repository guidance, inspect existing code before changing it, make focused edits, and verify the result.";
+
+const REASONING_LEVEL_DESCRIPTIONS: Record<Effort, string> = {
+	[Effort.Minimal]: "Fastest response with minimal deliberation.",
+	[Effort.Low]: "Brief reasoning for straightforward work.",
+	[Effort.Medium]: "Balanced reasoning for normal engineering work.",
+	[Effort.High]: "Deeper reasoning for complex work.",
+	[Effort.XHigh]: "Maximum available reasoning for difficult work.",
+};
+
+function codexModelInfo(model: Model<Api>): Record<string, unknown> {
+	const reasoningLevels = model.thinking?.efforts ?? [];
+	const contextWindow = model.contextWindow ?? model.maxTokens ?? 100_000;
+	return {
+		slug: `${model.provider}/${model.id}`,
+		display_name: model.name,
+		description: `${model.provider} model routed through the OMP auth gateway.`,
+		default_reasoning_level: model.thinking?.defaultLevel,
+		supported_reasoning_levels: reasoningLevels.map(effort => ({
+			effort,
+			description: REASONING_LEVEL_DESCRIPTIONS[effort],
+		})),
+		shell_type: "default",
+		visibility: "list",
+		supported_in_api: true,
+		priority: model.priority ?? 1_000,
+		additional_speed_tiers: [],
+		service_tiers: [],
+		availability_nux: null,
+		upgrade: null,
+		base_instructions: CODEX_GATEWAY_BASE_INSTRUCTIONS,
+		include_skills_usage_instructions: false,
+		supports_reasoning_summary_parameter: false,
+		default_reasoning_summary: "auto",
+		support_verbosity: false,
+		default_verbosity: null,
+		apply_patch_tool_type: model.applyPatchToolType === "freeform" ? "freeform" : null,
+		web_search_tool_type: "text",
+		truncation_policy: { mode: "tokens", limit: contextWindow },
+		supports_parallel_tool_calls: model.supportsTools !== false,
+		supports_image_detail_original: false,
+		context_window: model.contextWindow,
+		max_context_window: model.contextWindow,
+		auto_compact_token_limit: Math.floor(contextWindow * 0.9),
+		effective_context_window_percent: 95,
+		experimental_supported_tools: [],
+		input_modalities: model.input,
+		supports_search_tool: false,
+		use_responses_lite: false,
+	};
+}
+
+function handleModelsList(opts: AuthGatewayBootOptions, req: Request): Response {
 	const list = opts.listModels ? Array.from(opts.listModels()) : [];
-	const data = list.map(model => ({
-		id: model.id,
-		object: "model" as const,
-		owned_by: model.provider,
-		api: model.api,
-	}));
-	return json(200, { object: "list", data });
+	const body = { models: list.map(codexModelInfo) };
+	const payload = JSON.stringify(body);
+	const etag = `"${deterministicUuid(payload)}"`;
+	if (req.headers.get("if-none-match") === etag) {
+		return new Response(null, { status: 304, headers: { ETag: etag } });
+	}
+	return new Response(payload, {
+		status: 200,
+		headers: {
+			"Content-Type": "application/json",
+			"X-Content-Type-Options": "nosniff",
+			ETag: etag,
+		},
+	});
 }
 
 export function startAuthGateway(opts: AuthGatewayBootOptions): AuthGatewayServerHandle {
@@ -856,7 +916,7 @@ export function startAuthGateway(opts: AuthGatewayBootOptions): AuthGatewayServe
 
 				// Model catalog.
 				if (req.method === "GET" && pathname === "/v1/models") {
-					return withCors(handleModelsList(opts), req);
+					return withCors(handleModelsList(opts, req), req);
 				}
 
 				// Route-table miss: no format module to defer to, so we emit a

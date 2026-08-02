@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Retried credential- and account-scoped HTTP 403 failures through the same refresh-then-sibling path as 401s, including Anthropic `oauth_not_allowed_for_organization`, while leaving generic forbidden responses non-rotatable.
+
 ## [16.1.15] - 2026-06-22
 
 ### Fixed

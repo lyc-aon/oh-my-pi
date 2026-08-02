@@ -113,6 +113,10 @@ export interface StoredAuthCredential {
 	provider: string;
 	credential: AuthCredential;
 	disabledCause: string | null;
+	/** Higher values win within the same quota-health class. */
+	selectionPriority?: number;
+	/** Fraction of quota to keep in reserve before preferring a healthy sibling. */
+	usageReserveFraction?: number;
 }
 
 /**
@@ -273,6 +277,119 @@ export interface AuthCredentialSnapshot {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Auth Attempt Ledger Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AuthAttemptReasonCode =
+	| "rate_limit"
+	| "authentication"
+	| "transient"
+	| "classifier_refusal"
+	| "fireworks_fast"
+	| "unknown";
+
+export type AuthAttemptOutcome = "succeeded" | "failed" | "aborted";
+
+export interface AuthAttemptUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	totalTokens: number;
+}
+
+export interface AuthAttemptLedgerEntry {
+	recordedAt: number;
+	sessionId?: string;
+	attempt: number;
+	selector: string;
+	nextSelector?: string;
+	reasonCode: AuthAttemptReasonCode;
+	outcome: AuthAttemptOutcome;
+	usage: AuthAttemptUsage;
+	costUsd: number;
+}
+
+export interface AuthAttemptQuery {
+	sessionId?: string;
+	selector?: string;
+	reasonCode?: AuthAttemptReasonCode;
+	outcome?: AuthAttemptOutcome;
+	sinceMs?: number;
+	limit?: number;
+}
+
+const VALID_REASON_CODES: ReadonlySet<AuthAttemptReasonCode> = new Set([
+	"rate_limit",
+	"authentication",
+	"transient",
+	"classifier_refusal",
+	"fireworks_fast",
+	"unknown",
+]);
+
+const VALID_OUTCOMES: ReadonlySet<AuthAttemptOutcome> = new Set(["succeeded", "failed", "aborted"]);
+
+export function sanitizeAuthAttemptLedgerEntry(entry: unknown): AuthAttemptLedgerEntry {
+	if (typeof entry !== "object" || entry === null) {
+		throw new TypeError("AuthAttemptLedgerEntry must be an object");
+	}
+	const obj = entry as Record<string, unknown>;
+
+	const recordedAt =
+		typeof obj.recordedAt === "number" && Number.isFinite(obj.recordedAt) ? obj.recordedAt : Date.now();
+
+	const sessionId = typeof obj.sessionId === "string" && obj.sessionId.length > 0 ? obj.sessionId : undefined;
+
+	const attempt =
+		typeof obj.attempt === "number" && Number.isFinite(obj.attempt) ? Math.max(0, Math.floor(obj.attempt)) : 0;
+
+	if (typeof obj.selector !== "string") {
+		throw new TypeError("AuthAttemptLedgerEntry.selector must be a string");
+	}
+	const selector = obj.selector;
+
+	const nextSelector =
+		typeof obj.nextSelector === "string" && obj.nextSelector.length > 0 ? obj.nextSelector : undefined;
+
+	if (typeof obj.reasonCode !== "string" || !VALID_REASON_CODES.has(obj.reasonCode as AuthAttemptReasonCode)) {
+		throw new TypeError(`Invalid AuthAttemptLedgerEntry.reasonCode: ${String(obj.reasonCode)}`);
+	}
+	const reasonCode = obj.reasonCode as AuthAttemptReasonCode;
+
+	if (typeof obj.outcome !== "string" || !VALID_OUTCOMES.has(obj.outcome as AuthAttemptOutcome)) {
+		throw new TypeError(`Invalid AuthAttemptLedgerEntry.outcome: ${String(obj.outcome)}`);
+	}
+	const outcome = obj.outcome as AuthAttemptOutcome;
+
+	const rawUsage = typeof obj.usage === "object" && obj.usage !== null ? (obj.usage as Record<string, unknown>) : {};
+	const parseNonNegInt = (val: unknown): number =>
+		typeof val === "number" && Number.isFinite(val) && val >= 0 ? Math.floor(val) : 0;
+
+	const usage: AuthAttemptUsage = {
+		input: parseNonNegInt(rawUsage.input),
+		output: parseNonNegInt(rawUsage.output),
+		cacheRead: parseNonNegInt(rawUsage.cacheRead),
+		cacheWrite: parseNonNegInt(rawUsage.cacheWrite),
+		totalTokens: parseNonNegInt(rawUsage.totalTokens),
+	};
+
+	const costUsd =
+		typeof obj.costUsd === "number" && Number.isFinite(obj.costUsd) && obj.costUsd >= 0 ? obj.costUsd : 0;
+
+	return {
+		recordedAt,
+		...(sessionId !== undefined ? { sessionId } : {}),
+		attempt,
+		selector,
+		...(nextSelector !== undefined ? { nextSelector } : {}),
+		reasonCode,
+		outcome,
+		usage,
+		costUsd,
+	};
+}
+// ─────────────────────────────────────────────────────────────────────────────
 // AuthCredentialStore interface
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -298,6 +415,18 @@ export interface AuthCredentialStore {
 	setCache(key: string, value: string, expiresAtSec: number): void;
 	cleanExpiredCache(): void;
 	/**
+	 * Async CAS-disable hook for remote stores. The broker owns the actual OAuth
+	 * refresh failure and may already have disabled the row; implementations
+	 * reconcile that durable state before AuthStorage updates its cache.
+	 */
+	tryDisableAuthCredentialIfMatchesRemote?(id: number, expectedData: string, disabledCause: string): Promise<boolean>;
+	/**
+	 * Subscribe to externally-sourced credential changes. Remote snapshot stores
+	 * use this to keep AuthStorage's provider cache synchronized with broker SSE
+	 * updates. Local stores omit it because AuthStorage owns their mutations.
+	 */
+	onCredentialsChanged?(listener: () => void): () => void;
+	/**
 	 * Append usage-limit snapshots for trend history. Optional: stores without
 	 * durable storage (e.g. the broker remote store) omit it and recording is
 	 * skipped — the broker host records into its own database instead.
@@ -309,6 +438,10 @@ export interface AuthCredentialStore {
 	listUsageCosts?(query?: UsageCostHistoryQuery): UsageCostHistoryEntry[];
 	/** Read recorded usage-limit snapshots, oldest first. */
 	listUsageHistory?(query?: UsageHistoryQuery): UsageHistoryEntry[];
+	/** Append a secret-free fallback attempt entry to the durable ledger. */
+	recordAuthAttempt?(entry: AuthAttemptLedgerEntry): Promise<void> | void;
+	/** Read recorded fallback attempt ledger entries, oldest first. */
+	listAuthAttempts?(query?: AuthAttemptQuery): AuthAttemptLedgerEntry[] | Promise<AuthAttemptLedgerEntry[]>;
 	/**
 	 * Optional store-supplied OAuth refresh. When present, `AuthStorage` uses
 	 * it before the per-provider local refresh path. `RemoteAuthCredentialStore`
@@ -846,6 +979,8 @@ function storedCredentialArraysEqual(left: StoredCredential[], right: StoredCred
 		const rightEntry = right[index];
 		if (!leftEntry || !rightEntry) return false;
 		if (leftEntry.id !== rightEntry.id) return false;
+		if (leftEntry.selectionPriority !== rightEntry.selectionPriority) return false;
+		if (leftEntry.usageReserveFraction !== rightEntry.usageReserveFraction) return false;
 		if (!authCredentialEquals(leftEntry.credential, rightEntry.credential)) return false;
 	}
 	return true;
@@ -886,7 +1021,12 @@ class AuthStorageUsageCache implements UsageCache {
 // In-memory representation
 // ─────────────────────────────────────────────────────────────────────────────
 
-type StoredCredential = { id: number; credential: AuthCredential };
+type StoredCredential = {
+	id: number;
+	credential: AuthCredential;
+	selectionPriority?: number;
+	usageReserveFraction?: number;
+};
 type OAuthSelection = { credential: OAuthCredential; index: number };
 
 type OAuthCandidate = {
@@ -900,6 +1040,8 @@ type RankedOAuthCandidate = OAuthCandidate & {
 	blockedUntil?: number;
 	hasPriorityBoost: boolean;
 	planPriority: number;
+	selectionPriority: number;
+	usageClass: number;
 	secondaryUsed: number;
 	secondaryDrainRate: number;
 	primaryUsed: number;
@@ -959,6 +1101,8 @@ export class AuthStorage {
 	#oauthRefreshInFlight: Map<number, Promise<AuthCredentialSnapshotEntry>> = new Map();
 	#oauthCredentialRefreshInFlight: Map<number, Promise<OAuthCredentials>> = new Map();
 	#closed = false;
+	#storeChangeUnsubscribe?: () => void;
+	#storeReloadInFlight?: Promise<void>;
 
 	constructor(store: AuthCredentialStore, options: AuthStorageOptions = {}) {
 		this.#store = store;
@@ -990,6 +1134,20 @@ export class AuthStorage {
 				debug: (message, meta) => logger.debug(message, meta),
 				warn: (message, meta) => logger.warn(message, meta),
 			} satisfies UsageLogger);
+		this.#storeChangeUnsubscribe = this.#store.onCredentialsChanged?.(() => {
+			if (this.#closed || this.#storeReloadInFlight) return;
+			const reload = this.reload()
+				.catch(error => {
+					logger.warn("Failed to reload credentials after store change", {
+						source: this.#sourceLabel,
+						error: String(error),
+					});
+				})
+				.finally(() => {
+					if (this.#storeReloadInFlight === reload) this.#storeReloadInFlight = undefined;
+				});
+			this.#storeReloadInFlight = reload;
+		});
 	}
 
 	/**
@@ -1009,6 +1167,8 @@ export class AuthStorage {
 	 */
 	close(): void {
 		if (this.#closed) return;
+		this.#storeChangeUnsubscribe?.();
+		this.#storeChangeUnsubscribe = undefined;
 		this.#closed = true;
 		this.#store.close();
 	}
@@ -1132,7 +1292,12 @@ export class AuthStorage {
 		const grouped = new Map<string, StoredCredential[]>();
 		for (const record of records) {
 			const list = grouped.get(record.provider) ?? [];
-			list.push({ id: record.id, credential: record.credential });
+			list.push({
+				id: record.id,
+				credential: record.credential,
+				selectionPriority: record.selectionPriority,
+				usageReserveFraction: record.usageReserveFraction,
+			});
 			grouped.set(record.provider, list);
 		}
 
@@ -1231,8 +1396,10 @@ export class AuthStorage {
 			kept.push(entry);
 		}
 		if (removed.length > 0) {
-			for (const entry of removed) {
-				this.#store.deleteAuthCredential(entry.id, "deduplicated duplicate credential");
+			if (!this.#store.deleteAuthCredentialRemote) {
+				for (const entry of removed) {
+					this.#store.deleteAuthCredential(entry.id, "deduplicated duplicate credential");
+				}
 			}
 			this.#resetProviderAssignments(provider);
 		}
@@ -1500,18 +1667,20 @@ export class AuthStorage {
 	 * disable, so the caller can reload and retry instead of clobbering the
 	 * freshly-rotated credential.
 	 */
-	#tryDisableCredentialAtIfMatches(
+	async #tryDisableCredentialAtIfMatches(
 		provider: string,
 		index: number,
 		expectedCredential: AuthCredential,
 		disabledCause: string,
-	): boolean {
+	): Promise<boolean> {
 		const entries = this.#getStoredCredentials(provider);
 		if (index < 0 || index >= entries.length) return false;
 		const target = entries[index];
 		const serialized = serializeCredential(provider, expectedCredential);
 		if (!serialized) return false;
-		const disabled = this.#store.tryDisableAuthCredentialIfMatches(target.id, serialized.data, disabledCause);
+		const disabled = this.#store.tryDisableAuthCredentialIfMatchesRemote
+			? await this.#store.tryDisableAuthCredentialIfMatchesRemote(target.id, serialized.data, disabledCause)
+			: this.#store.tryDisableAuthCredentialIfMatches(target.id, serialized.data, disabledCause);
 		if (!disabled) return false;
 		const updated = entries.filter((_value, idx) => idx !== index);
 		this.#setStoredCredentials(provider, updated);
@@ -1574,7 +1743,12 @@ export class AuthStorage {
 			: this.#store.replaceAuthCredentialsForProvider(provider, deduped);
 		this.#setStoredCredentials(
 			provider,
-			stored.map(record => ({ id: record.id, credential: record.credential })),
+			stored.map(record => ({
+				id: record.id,
+				credential: record.credential,
+				selectionPriority: record.selectionPriority,
+				usageReserveFraction: record.usageReserveFraction,
+			})),
 		);
 		this.#resetProviderAssignments(provider);
 	}
@@ -1588,6 +1762,8 @@ export class AuthStorage {
 				id: entry.id,
 				provider,
 				credential: entry.credential,
+				selectionPriority: entry.selectionPriority,
+				usageReserveFraction: entry.usageReserveFraction,
 				disabledCause: null,
 			}));
 		}
@@ -1598,6 +1774,8 @@ export class AuthStorage {
 					id: entry.id,
 					provider: storedProvider,
 					credential: entry.credential,
+					selectionPriority: entry.selectionPriority,
+					usageReserveFraction: entry.usageReserveFraction,
 					disabledCause: null,
 				});
 			}
@@ -1611,7 +1789,12 @@ export class AuthStorage {
 			: this.#store.upsertAuthCredentialForProvider(provider, credential);
 		this.#setStoredCredentials(
 			provider,
-			stored.map(entry => ({ id: entry.id, credential: entry.credential })),
+			stored.map(entry => ({
+				id: entry.id,
+				credential: entry.credential,
+				selectionPriority: entry.selectionPriority,
+				usageReserveFraction: entry.usageReserveFraction,
+			})),
 		);
 		this.#resetProviderAssignments(provider);
 	}
@@ -2115,7 +2298,7 @@ export class AuthStorage {
 							const entries = this.#getStoredCredentials(request.provider);
 							const index = entries.findIndex(entry => entry.id === credentialId);
 							if (index !== -1) {
-								const disabled = this.#tryDisableCredentialAtIfMatches(
+								const disabled = await this.#tryDisableCredentialAtIfMatches(
 									request.provider,
 									index,
 									refreshableCredential,
@@ -2250,6 +2433,20 @@ export class AuthStorage {
 	 */
 	listUsageHistory(query?: UsageHistoryQuery): UsageHistoryEntry[] {
 		return this.#store.listUsageHistory?.(query) ?? [];
+	}
+
+	/** Durably record one allowlisted fallback attempt. */
+	async recordAuthAttempt(entry: AuthAttemptLedgerEntry): Promise<void> {
+		const record = this.#store.recordAuthAttempt;
+		if (!record) return;
+		await record.call(this.#store, sanitizeAuthAttemptLedgerEntry(entry));
+	}
+
+	/** Read durable fallback attempts, oldest first. */
+	async listAuthAttempts(query?: AuthAttemptQuery): Promise<AuthAttemptLedgerEntry[]> {
+		const list = this.#store.listAuthAttempts;
+		if (!list) return [];
+		return await list.call(this.#store, query);
 	}
 
 	/** Record one observed provider request cost for later local usage aggregation. */
@@ -2959,6 +3156,17 @@ export class AuthStorage {
 		return usedFraction / elapsedHours;
 	}
 
+	#usageReserveClass(limits: UsageLimit[] | undefined, reserveFraction: number): number {
+		if (!limits || limits.length === 0 || reserveFraction <= 0) return 0;
+		let reserveReached = false;
+		for (const limit of limits) {
+			const usedFraction = resolveUsedFraction(limit);
+			if (limit.status === "exhausted" || (usedFraction !== undefined && usedFraction >= 1)) return 2;
+			if (usedFraction !== undefined && 1 - usedFraction <= reserveFraction) reserveReached = true;
+		}
+		return reserveReached ? 1 : 0;
+	}
+
 	#compareRankedOAuthCandidatePriority(
 		left: RankedOAuthCandidate,
 		right: RankedOAuthCandidate,
@@ -2974,6 +3182,10 @@ export class AuthStorage {
 		}
 		if (requiresOpenAICodexProModel(provider, modelId) && left.planPriority !== right.planPriority) {
 			return left.planPriority - right.planPriority;
+		}
+		if (left.usageClass !== right.usageClass) return left.usageClass - right.usageClass;
+		if (left.selectionPriority !== right.selectionPriority) {
+			return right.selectionPriority - left.selectionPriority;
 		}
 		if (left.hasPriorityBoost !== right.hasPriorityBoost) return left.hasPriorityBoost ? -1 : 1;
 		let metric = compareUsageRankingMetric(left.secondaryDrainRate, right.secondaryDrainRate);
@@ -3004,7 +3216,7 @@ export class AuthStorage {
 		modelId: string | undefined,
 	): OAuthCandidate[] {
 		candidates.sort((left, right) => this.#compareRankedOAuthCandidates(left, right, provider, modelId));
-		if (!sessionId) {
+		if (!sessionId || candidates.some(candidate => candidate.selectionPriority !== 0 || candidate.usageClass !== 0)) {
 			return candidates.map(candidate => ({
 				selection: candidate.selection,
 				usage: candidate.usage,
@@ -3136,6 +3348,9 @@ export class AuthStorage {
 			const primary = windows?.primary;
 			const secondary = windows?.secondary;
 			const secondaryTarget = secondary ?? primary;
+			const storedCredential = this.#getStoredCredentials(args.provider)[selection.index];
+			const reserveFraction = storedCredential?.usageReserveFraction ?? 0;
+			const selectionPriority = storedCredential?.selectionPriority ?? 0;
 			ranked.push({
 				selection,
 				usage,
@@ -3144,6 +3359,8 @@ export class AuthStorage {
 				blockedUntil,
 				hasPriorityBoost: strategy.hasPriorityBoost?.(primary) ?? false,
 				planPriority: getOpenAICodexPlanPriority(usage),
+				selectionPriority,
+				usageClass: this.#usageReserveClass(scopedLimits, reserveFraction),
 				secondaryUsed: this.#normalizeUsageFraction(secondaryTarget),
 				secondaryDrainRate: this.#computeWindowDrainRate(
 					secondaryTarget,
@@ -3412,7 +3629,12 @@ export class AuthStorage {
 		const latestRows = this.#store.listAuthCredentials(provider);
 		this.#setStoredCredentials(
 			provider,
-			latestRows.map(row => ({ id: row.id, credential: row.credential })),
+			latestRows.map(row => ({
+				id: row.id,
+				credential: row.credential,
+				selectionPriority: row.selectionPriority,
+				usageReserveFraction: row.usageReserveFraction,
+			})),
 		);
 		const latestIndex = latestRows.findIndex(row => row.id === credentialId);
 		if (latestIndex === -1) return false;
@@ -3620,7 +3842,7 @@ export class AuthStorage {
 				// Use a CAS-style disable conditioned on the row still containing the stale credential
 				// we tried to refresh, so a peer rotation that lands between the pre-check above and
 				// this disable doesn't soft-delete the freshly-rotated row.
-				const disabled = this.#tryDisableCredentialAtIfMatches(
+				const disabled = await this.#tryDisableCredentialAtIfMatches(
 					provider,
 					selection.index,
 					selection.credential,
@@ -4056,7 +4278,12 @@ export class AuthStorage {
 		const latestRows = this.#store.listAuthCredentials(provider);
 		this.#setStoredCredentials(
 			provider,
-			latestRows.map(row => ({ id: row.id, credential: row.credential })),
+			latestRows.map(row => ({
+				id: row.id,
+				credential: row.credential,
+				selectionPriority: row.selectionPriority,
+				usageReserveFraction: row.usageReserveFraction,
+			})),
 		);
 		return true;
 	}
@@ -4119,7 +4346,12 @@ export class AuthStorage {
 			const latestRows = this.#store.listAuthCredentials(provider);
 			this.#setStoredCredentials(
 				provider,
-				latestRows.map(row => ({ id: row.id, credential: row.credential })),
+				latestRows.map(row => ({
+					id: row.id,
+					credential: row.credential,
+					selectionPriority: row.selectionPriority,
+					usageReserveFraction: row.usageReserveFraction,
+				})),
 			);
 		}
 
@@ -4573,6 +4805,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
 	#lastUsageHistoryStmt: Statement;
 	#listUsageHistoryStmt: Statement;
 	#updateUsageHistoryStmt: Statement;
+	#insertAuthAttemptStmt: Statement;
 	#closed = false;
 
 	constructor(db: Database) {
@@ -4592,10 +4825,10 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
 			`INSERT INTO auth_credentials (provider, credential_type, data, identity_key, created_at, updated_at) VALUES (?, ?, ?, ?, ${SQLITE_NOW_EPOCH}, ${SQLITE_NOW_EPOCH}) RETURNING id`,
 		);
 		this.#updateStmt = this.#db.prepare(
-			`UPDATE auth_credentials SET credential_type = ?, data = ?, identity_key = ?, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ?`,
+			`UPDATE auth_credentials SET credential_type = ?, data = ?, identity_key = ?, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ? AND disabled_cause IS NULL`,
 		);
 		this.#deleteStmt = this.#db.prepare(
-			`UPDATE auth_credentials SET disabled_cause = ?, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ?`,
+			`UPDATE auth_credentials SET disabled_cause = ?, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ? AND disabled_cause IS NULL`,
 		);
 		this.#deleteIfMatchesStmt = this.#db.prepare(
 			`UPDATE auth_credentials SET disabled_cause = ?, updated_at = ${SQLITE_NOW_EPOCH} WHERE id = ? AND data = ? AND disabled_cause IS NULL`,
@@ -4627,6 +4860,13 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
 		this.#insertUsageCostStmt = this.#db.prepare(
 			"INSERT INTO usage_cost_history (recorded_at, provider, account_key, cost_usd) VALUES (?, ?, ?, ?)",
 		);
+		this.#insertAuthAttemptStmt = this.#db.prepare(`
+			INSERT INTO auth_attempt_ledger (
+				recorded_at, session_id, attempt, selector, next_selector,
+				reason_code, outcome, input_tokens, output_tokens,
+				cache_read_tokens, cache_write_tokens, total_tokens, cost_usd
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`);
 		this.#listUsageCostsStmt = this.#db.prepare(
 			"SELECT recorded_at, provider, account_key, cost_usd FROM usage_cost_history WHERE recorded_at >= ? AND (? IS NULL OR provider = ?) AND (? IS NULL OR account_key = ?) ORDER BY recorded_at ASC",
 		);
@@ -4719,6 +4959,25 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
 			);
 			CREATE INDEX IF NOT EXISTS idx_usage_cost_history_lookup ON usage_cost_history(provider, account_key, recorded_at);
 			CREATE INDEX IF NOT EXISTS idx_usage_history_recorded ON usage_history(recorded_at);
+			CREATE TABLE IF NOT EXISTS auth_attempt_ledger (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				recorded_at INTEGER NOT NULL,
+				session_id TEXT,
+				attempt INTEGER NOT NULL,
+				selector TEXT NOT NULL,
+				next_selector TEXT,
+				reason_code TEXT NOT NULL,
+				outcome TEXT NOT NULL,
+				input_tokens INTEGER NOT NULL,
+				output_tokens INTEGER NOT NULL,
+				cache_read_tokens INTEGER NOT NULL,
+				cache_write_tokens INTEGER NOT NULL,
+				total_tokens INTEGER NOT NULL,
+				cost_usd REAL NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_auth_attempt_ledger_recorded ON auth_attempt_ledger(recorded_at);
+			CREATE INDEX IF NOT EXISTS idx_auth_attempt_ledger_session ON auth_attempt_ledger(session_id, recorded_at);
+			CREATE INDEX IF NOT EXISTS idx_auth_attempt_ledger_selector ON auth_attempt_ledger(selector, recorded_at);
 		`);
 
 		if (!this.#authCredentialsTableExists()) {
@@ -5104,32 +5363,29 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
 	}
 
 	updateAuthCredential(id: number, credential: AuthCredential): void {
+		const providerStmt = this.#db.prepare(
+			"SELECT provider FROM auth_credentials WHERE id = ? AND disabled_cause IS NULL",
+		);
+		let providerRow: { provider?: string } | undefined;
 		try {
-			const providerStmt = this.#db.prepare("SELECT provider FROM auth_credentials WHERE id = ?");
-			let providerRow: { provider?: string } | undefined;
-			try {
-				providerRow = providerStmt.get(id) as { provider?: string } | undefined;
-			} finally {
-				providerStmt.finalize();
-			}
-			const provider = providerRow?.provider ?? "";
-			const serialized = serializeCredential(provider, credential);
-			if (!serialized) return;
-			this.#updateStmt.run(serialized.credentialType, serialized.data, serialized.identityKey, id);
-			if (provider) {
-				this.#purgeSupersededDisabledRows(provider, this.listAuthCredentials(provider));
-			}
-		} catch {
-			// Ignore update failures
+			providerRow = providerStmt.get(id) as { provider?: string } | undefined;
+		} finally {
+			providerStmt.finalize();
 		}
+		const provider = providerRow?.provider;
+		if (!provider) throw new Error(`No active credential with id=${id}`);
+		const serialized = serializeCredential(provider, credential);
+		if (!serialized) throw new Error(`Credential with id=${id} could not be serialized`);
+		const result = this.#updateStmt.run(serialized.credentialType, serialized.data, serialized.identityKey, id) as {
+			changes: number;
+		};
+		if (result.changes !== 1) throw new Error(`Credential update was not persisted for id=${id}`);
+		this.#purgeSupersededDisabledRows(provider, this.listAuthCredentials(provider));
 	}
 
 	deleteAuthCredential(id: number, disabledCause: string): void {
-		try {
-			this.#deleteStmt.run(normalizeDisabledCause(disabledCause), id);
-		} catch {
-			// Ignore delete failures
-		}
+		const result = this.#deleteStmt.run(normalizeDisabledCause(disabledCause), id) as { changes: number };
+		if (result.changes !== 1) throw new Error(`Credential disable was not persisted for id=${id}`);
 	}
 
 	/**
@@ -5359,6 +5615,97 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
 	deleteProvider(provider: string): void {
 		this.deleteAuthCredentialsForProvider(provider, "deleted by user");
 	}
+	recordAuthAttempt(entry: AuthAttemptLedgerEntry): void {
+		const sanitized = sanitizeAuthAttemptLedgerEntry(entry);
+		this.#insertAuthAttemptStmt.run(
+			sanitized.recordedAt,
+			sanitized.sessionId ?? null,
+			sanitized.attempt,
+			sanitized.selector,
+			sanitized.nextSelector ?? null,
+			sanitized.reasonCode,
+			sanitized.outcome,
+			sanitized.usage.input,
+			sanitized.usage.output,
+			sanitized.usage.cacheRead,
+			sanitized.usage.cacheWrite,
+			sanitized.usage.totalTokens,
+			sanitized.costUsd,
+		);
+	}
+
+	listAuthAttempts(query?: AuthAttemptQuery): AuthAttemptLedgerEntry[] {
+		try {
+			const sinceMs = query?.sinceMs ?? 0;
+			const sessionId = query?.sessionId ?? null;
+			const selector = query?.selector ?? null;
+			const reasonCode = query?.reasonCode ?? null;
+			const outcome = query?.outcome ?? null;
+			const limit = Math.min(Math.max(1, query?.limit ?? 1000), 1000);
+
+			const sql = `
+				SELECT recorded_at, session_id, attempt, selector, next_selector,
+				       reason_code, outcome, input_tokens, output_tokens,
+				       cache_read_tokens, cache_write_tokens, total_tokens, cost_usd
+				FROM auth_attempt_ledger
+				WHERE recorded_at >= ?
+				  AND (? IS NULL OR session_id = ?)
+				  AND (? IS NULL OR selector = ?)
+				  AND (? IS NULL OR reason_code = ?)
+				  AND (? IS NULL OR outcome = ?)
+				ORDER BY recorded_at ASC, id ASC
+				LIMIT ?
+			`;
+			const stmt = this.#db.prepare(sql);
+			const rows = stmt.all(
+				sinceMs,
+				sessionId,
+				sessionId,
+				selector,
+				selector,
+				reasonCode,
+				reasonCode,
+				outcome,
+				outcome,
+				limit,
+			) as Array<{
+				recorded_at: number;
+				session_id: string | null;
+				attempt: number;
+				selector: string;
+				next_selector: string | null;
+				reason_code: string;
+				outcome: string;
+				input_tokens: number;
+				output_tokens: number;
+				cache_read_tokens: number;
+				cache_write_tokens: number;
+				total_tokens: number;
+				cost_usd: number;
+			}>;
+
+			return rows.map(row => ({
+				recordedAt: row.recorded_at,
+				...(row.session_id ? { sessionId: row.session_id } : {}),
+				attempt: row.attempt,
+				selector: row.selector,
+				...(row.next_selector ? { nextSelector: row.next_selector } : {}),
+				reasonCode: row.reason_code as AuthAttemptReasonCode,
+				outcome: row.outcome as AuthAttemptOutcome,
+				usage: {
+					input: row.input_tokens,
+					output: row.output_tokens,
+					cacheRead: row.cache_read_tokens,
+					cacheWrite: row.cache_write_tokens,
+					totalTokens: row.total_tokens,
+				},
+				costUsd: row.cost_usd,
+			}));
+		} catch (error) {
+			logger.warn("SqliteAuthCredentialStore.listAuthAttempts failed", { error: String(error) });
+			return [];
+		}
+	}
 
 	close(): void {
 		if (this.#closed) return;
@@ -5382,6 +5729,7 @@ export class SqliteAuthCredentialStore implements AuthCredentialStore {
 		this.#updateUsageHistoryStmt.finalize();
 		this.#insertUsageCostStmt.finalize();
 		this.#listUsageCostsStmt.finalize();
+		this.#insertAuthAttemptStmt.finalize();
 		this.#db.close();
 	}
 }

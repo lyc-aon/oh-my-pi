@@ -90,6 +90,64 @@ describe("auth-broker wire surface", () => {
 		}
 	});
 
+	test("snapshot clients ignore newer entry and API-key metadata", async () => {
+		const payload = {
+			generation: 7,
+			generatedAt: 100,
+			serverNowMs: 100,
+			refresher: {
+				enabled: false,
+				intervalMs: 0,
+				skewMs: 0,
+				nextSweepInMs: Number.MAX_SAFE_INTEGER,
+			},
+			credentials: [
+				{
+					id: 1,
+					provider: "anthropic",
+					credential: {
+						type: "oauth",
+						access: "synthetic-access",
+						refresh: REMOTE_REFRESH_SENTINEL,
+						expires: 1_800_000_000_000,
+						email: "allowed@example.com",
+						orgName: "Example Organization",
+					},
+					identityKey: "allowed@example.com",
+					rotatesInMs: null,
+					blocks: [{ scope: "tokens", until: 1_800_000_000_000 }],
+				},
+				{
+					id: 2,
+					provider: "devin",
+					credential: { type: "api_key", key: "synthetic-key", source: "vault" },
+					identityKey: null,
+					rotatesInMs: null,
+				},
+			],
+		};
+		const fetchImpl: typeof fetch = Object.assign(
+			async (_input: string | URL | Request, _init?: RequestInit) =>
+				new Response(JSON.stringify(payload), {
+					status: 200,
+					headers: { "Content-Type": "application/json", ETag: '"7"' },
+				}),
+			{ preconnect: fetch.preconnect },
+		);
+		const client = new AuthBrokerClient({
+			url: "http://127.0.0.1:1",
+			token: "test-bearer",
+			maxRetries: 0,
+			fetchImpl,
+		});
+
+		const result = await client.fetchSnapshot();
+		if (result.status !== 200) throw new Error("expected snapshot");
+		expect("blocks" in result.snapshot.credentials[0]).toBe(false);
+		expect(result.snapshot.credentials[0].credential).toMatchObject({ orgName: "Example Organization" });
+		expect("source" in result.snapshot.credentials[1].credential).toBe(false);
+	});
+
 	test("GET /v1/snapshot returns generation headers and 304 for unchanged long-poll", async () => {
 		const res = await fetch(`${handle!.url}/v1/snapshot`, {
 			headers: { Authorization: `Bearer ${token}` },

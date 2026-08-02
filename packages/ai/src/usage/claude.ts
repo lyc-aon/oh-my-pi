@@ -2,6 +2,7 @@ import { scheduler } from "node:timers/promises";
 import { toNumber } from "@oh-my-pi/pi-catalog/utils";
 import { claudeCodeVersion } from "../providers/anthropic";
 import type {
+	CredentialRankingContext,
 	CredentialRankingStrategy,
 	UsageAmount,
 	UsageFetchContext,
@@ -474,11 +475,77 @@ export const claudeUsageProvider: UsageProvider = {
 	supports: params => params.provider === "anthropic" && params.credential.type === "oauth",
 };
 
+function getLimitDurationMs(limit: UsageLimit, fetchedAt?: number): number {
+	if (typeof limit.window?.durationMs === "number" && limit.window.durationMs > 0) {
+		return limit.window.durationMs;
+	}
+	if (
+		typeof limit.window?.resetsAt === "number" &&
+		limit.window.resetsAt > 0 &&
+		typeof fetchedAt === "number" &&
+		fetchedAt > 0
+	) {
+		const diff = limit.window.resetsAt - fetchedAt;
+		if (diff > 0) return diff;
+	}
+	const str =
+		`${limit.window?.id ?? ""} ${limit.scope?.windowId ?? ""} ${limit.id} ${limit.label} ${limit.window?.label ?? ""}`.toLowerCase();
+	const match = str.match(/(\d+)\s*(mo|h|d|m|s|w|y)/);
+	if (match) {
+		const num = parseInt(match[1]!, 10);
+		const unit = match[2];
+		if (unit === "s") return num * 1000;
+		if (unit === "m") return num * 60 * 1000;
+		if (unit === "h") return num * 60 * 60 * 1000;
+		if (unit === "d") return num * 24 * 60 * 60 * 1000;
+		if (unit === "w") return num * 7 * 24 * 60 * 60 * 1000;
+		if (unit === "mo") return num * 30 * 24 * 60 * 60 * 1000;
+		if (unit === "y") return num * 365 * 24 * 60 * 60 * 1000;
+	}
+	return Number.POSITIVE_INFINITY;
+}
+
+export function findNormalizedWindowLimits(
+	report: UsageReport,
+	context?: CredentialRankingContext,
+): { primary?: UsageLimit; secondary?: UsageLimit } {
+	if (!report.limits || report.limits.length === 0) {
+		return {};
+	}
+
+	let candidates = report.limits;
+	if (context?.modelId) {
+		const modelScoped = candidates.filter(
+			l => l.scope?.modelId === context.modelId || (l.scope?.tier && context.modelId?.includes(l.scope.tier)),
+		);
+		if (modelScoped.length > 0) {
+			candidates = modelScoped;
+		}
+	}
+
+	if (candidates.length === 0) {
+		return {};
+	}
+
+	const sorted = [...candidates].sort((a, b) => {
+		const durA = getLimitDurationMs(a, report.fetchedAt);
+		const durB = getLimitDurationMs(b, report.fetchedAt);
+		if (durA !== durB) return durA - durB;
+		return a.id.localeCompare(b.id);
+	});
+
+	const primary = sorted[0];
+	const secondary =
+		sorted.find(
+			l => l !== primary && getLimitDurationMs(l, report.fetchedAt) > getLimitDurationMs(primary!, report.fetchedAt),
+		) ?? (sorted.length > 1 ? sorted[1] : undefined);
+
+	return { primary, secondary };
+}
+
 export const claudeRankingStrategy: CredentialRankingStrategy = {
-	findWindowLimits(report) {
-		const primary = report.limits.find(l => l.id === "anthropic:5h");
-		const secondary = report.limits.find(l => l.id === "anthropic:7d");
-		return { primary, secondary };
+	findWindowLimits(report, context) {
+		return findNormalizedWindowLimits(report, context);
 	},
 	windowDefaults: { primaryMs: 5 * 60 * 60 * 1000, secondaryMs: 7 * 24 * 60 * 60 * 1000 },
 };

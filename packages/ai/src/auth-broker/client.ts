@@ -7,8 +7,10 @@
  */
 import { readSseEvents } from "@oh-my-pi/pi-utils";
 import { type } from "arktype";
-import type { AuthCredential } from "../auth-storage";
+import type { AuthAttemptLedgerEntry, AuthAttemptQuery, AuthCredential } from "../auth-storage";
 import type {
+	AuthAttemptListResponse,
+	AuthAttemptRecordResponse,
 	CredentialDisableRequest,
 	CredentialDisableResponse,
 	CredentialRefreshResponse,
@@ -20,6 +22,9 @@ import type {
 	UsageResponse,
 } from "./types";
 import {
+	authAttemptLedgerEntrySchema,
+	authAttemptListResponseSchema,
+	authAttemptRecordResponseSchema,
 	credentialDisableResponseSchema,
 	credentialRefreshResponseSchema,
 	credentialUploadResponseSchema,
@@ -42,14 +47,54 @@ export interface AuthBrokerClientOptions {
 	fetchImpl?: typeof fetch;
 }
 
+interface AuthBrokerErrorMetadata {
+	code?: string;
+	operation?: string;
+	durable?: boolean;
+	retrySafe?: boolean;
+}
+
+function parseErrorMetadata(body: string): AuthBrokerErrorMetadata {
+	try {
+		const parsed = JSON.parse(body) as Record<string, unknown>;
+		return {
+			code: typeof parsed.code === "string" ? parsed.code : undefined,
+			operation: typeof parsed.operation === "string" ? parsed.operation : undefined,
+			durable: typeof parsed.durable === "boolean" ? parsed.durable : undefined,
+			retrySafe: typeof parsed.retrySafe === "boolean" ? parsed.retrySafe : undefined,
+		};
+	} catch {
+		return {};
+	}
+}
+
 export class AuthBrokerError extends Error {
 	readonly status: number | undefined;
 	readonly body: string | undefined;
-	constructor(message: string, opts: { status?: number; body?: string; cause?: unknown } = {}) {
+	readonly code: string | undefined;
+	readonly operation: string | undefined;
+	readonly durable: boolean | undefined;
+	readonly retrySafe: boolean | undefined;
+	constructor(
+		message: string,
+		opts: {
+			status?: number;
+			body?: string;
+			code?: string;
+			operation?: string;
+			durable?: boolean;
+			retrySafe?: boolean;
+			cause?: unknown;
+		} = {},
+	) {
 		super(message, { cause: opts.cause });
 		this.name = "AuthBrokerError";
 		this.status = opts.status;
 		this.body = opts.body;
+		this.code = opts.code;
+		this.operation = opts.operation;
+		this.durable = opts.durable;
+		this.retrySafe = opts.retrySafe;
 	}
 }
 
@@ -141,6 +186,37 @@ export class AuthBrokerClient {
 		}
 		const snapshot = validated as SnapshotResponse;
 		return { status: 200, snapshot, generation: etagGeneration ?? snapshot.generation };
+	}
+	async recordAuthAttempt(entry: AuthAttemptLedgerEntry, signal?: AbortSignal): Promise<AuthAttemptRecordResponse> {
+		const validated = authAttemptLedgerEntrySchema(entry);
+		if (validated instanceof type.errors) {
+			throw new AuthBrokerError("Auth attempt entry failed schema validation", {
+				body: validated.summary,
+			});
+		}
+		return this.#request("POST", "/v1/attempts", {
+			schema: authAttemptRecordResponseSchema,
+			body: validated,
+			auth: true,
+			signal,
+		});
+	}
+
+	async listAuthAttempts(query?: AuthAttemptQuery, signal?: AbortSignal): Promise<AuthAttemptListResponse> {
+		const params = new URLSearchParams();
+		if (query?.sessionId) params.set("sessionId", query.sessionId);
+		if (query?.selector) params.set("selector", query.selector);
+		if (query?.reasonCode) params.set("reasonCode", query.reasonCode);
+		if (query?.outcome) params.set("outcome", query.outcome);
+		if (query?.sinceMs !== undefined) params.set("sinceMs", String(query.sinceMs));
+		if (query?.limit !== undefined) params.set("limit", String(query.limit));
+
+		const path = `/v1/attempts${params.size > 0 ? `?${params.toString()}` : ""}`;
+		return this.#request("GET", path, {
+			schema: authAttemptListResponseSchema,
+			auth: true,
+			signal,
+		});
 	}
 
 	/**
@@ -332,9 +408,11 @@ export class AuthBrokerClient {
 				});
 				if (!response.ok && response.status !== 304) {
 					const text = await response.text();
+					const metadata = parseErrorMetadata(text);
 					throw new AuthBrokerError(`Auth broker request failed: ${response.status} ${response.statusText}`, {
 						status: response.status,
 						body: text,
+						...metadata,
 					});
 				}
 				return response;

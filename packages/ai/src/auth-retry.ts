@@ -70,22 +70,37 @@ export function seedApiKeyResolver(seed: string | undefined, resolver: ApiKeyRes
 	};
 }
 
+const AUTHORIZATION_CREDENTIAL_FAILURE =
+	/\b(?:authentication_error|oauth_not_allowed_for_organization|permission_error|invalid[_ ](?:api[_ ]?key|token)|expired[_ ]token|revoked[_ ]token)\b/i;
+
+function authRetryErrorMessage(error: unknown): string | undefined {
+	if (error instanceof Error) return error.message;
+	if (typeof error === "string") return error;
+	if (!error || typeof error !== "object" || !("message" in error)) return undefined;
+	return typeof error.message === "string" ? error.message : undefined;
+}
+
 /**
  * Classifies whether an error should trigger a credential refresh/rotation
- * retry: a hard `401`, body-classified usage limit (Codex
- * `usage_limit_reached`, Anthropic account rate-limit, Google
- * `resource_exhausted`, OpenAI `insufficient_quota`, …), or a bare `429`
- * whose payload did not preserve a richer quota code. Transient 429s
+ * retry: a hard `401`, a credential- or account-scoped `403`, body-classified
+ * usage limit (Codex `usage_limit_reached`, Anthropic account rate-limit,
+ * Google `resource_exhausted`, OpenAI `insufficient_quota`, …), or a bare
+ * `429` whose payload did not preserve a richer quota code. Transient 429s
  * (`Too many requests`, per-minute caps) classify as `RATE_LIMIT_EXCEEDED`
  * via {@link parseRateLimitReason} and stay in the upstream-backoff lane.
  */
 export function isAuthRetryableError(error: unknown): boolean {
 	const status = extractHttpStatusFromError(error);
-	if (status === 401) return true;
-	const message = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
+	const message = authRetryErrorMessage(error);
 	const embeddedStatus = message ? extractHttpStatusFromError({ message }) : undefined;
-	if (embeddedStatus === 401) return true;
-	return isUsageLimitOutcome(status ?? embeddedStatus, message);
+	const leadingStatusMatch = message ? /^\s*(?:Error:\s*)?(401|403)\b/i.exec(message) : null;
+	const leadingStatus = leadingStatusMatch ? Number(leadingStatusMatch[1]) : undefined;
+	const effectiveStatus = status ?? embeddedStatus ?? leadingStatus;
+	if (effectiveStatus === 401) return true;
+	if (effectiveStatus === 403) {
+		return message !== undefined && AUTHORIZATION_CREDENTIAL_FAILURE.test(message);
+	}
+	return isUsageLimitOutcome(effectiveStatus, message);
 }
 
 /**

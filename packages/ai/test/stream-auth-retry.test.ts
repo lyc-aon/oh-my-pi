@@ -196,6 +196,44 @@ describe("streamSimple resolver auth retry", () => {
 		expect(keys).toEqual(["old-key", "new-key"]);
 	});
 
+	it("retries a credential-scoped 403 permission error before content", async () => {
+		const keys: unknown[] = [];
+		registerCustomApi(
+			API,
+			(_model: Model<Api>, _context: Context, options?: SimpleStreamOptions) => {
+				pushKey(keys, options);
+				const stream = new AssistantMessageEventStream();
+				queueMicrotask(() => {
+					if (keys.length === 1) {
+						stream.push({ type: "start", partial: assistant() });
+						stream.push({
+							type: "error",
+							reason: "error",
+							error: assistantError(
+								'{"type":"error","error":{"type":"permission_error","message":"OAuth authentication is currently not allowed for this organization.","details":{"error_code":"oauth_not_allowed_for_organization"}}}',
+								403,
+							),
+						});
+						return;
+					}
+					ok(stream);
+				});
+				return stream;
+			},
+			SOURCE_ID,
+		);
+
+		const stream = streamSimple(model(), context, {
+			apiKey: async ctx => (ctx.error === undefined ? "old-key" : "new-key"),
+		});
+		for await (const _event of stream) {
+			// drain
+		}
+
+		expect((await stream.result()).content).toEqual([{ type: "text", text: "ok" }]);
+		expect(keys).toEqual(["old-key", "new-key"]);
+	});
+
 	it("does not retry after replay-unsafe content has been emitted", async () => {
 		let retryResolves = 0;
 		const failure = authError();

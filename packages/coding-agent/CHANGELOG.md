@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Routed credential-scoped HTTP 403 failures into configured model fallback chains after provider account recovery is exhausted, so a failed subagent account can continue on its next provider instead of terminating the job.
+
 - Fixed streaming output blocks incorrectly calculating preview height, preventing flickering banners
 - Fixed streaming `bash`/`eval` tool output duplicating its `… (N earlier lines, showing 10 of M) (ctrl+o to expand)` preview into native scrollback. The collapsed output is a sliding tail window fixed at 10 lines, so when the box outgrew the live viewport (a tall command/output under a still-live predecessor such as a parallel tool) its mutating tail scrolled above the commit window and the renderer re-committed a fresh snapshot every frame, stacking dozens of stale preview banners and chunks. The output preview is now clamped to the viewport tail (`Math.min(10, previewWindowRows())`) and measured in visual rows at the box's inner content width (via the new `outputBlockContentWidth` helper), so on short terminals the volatile tail shrinks to stay on-screen and is never committed. Fixes the duplication introduced when scroll-off commits were made loss-free.
 - Prevented `/handoff` from executing while a response is streaming to avoid session corruption

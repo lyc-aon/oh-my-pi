@@ -109,6 +109,53 @@ describe("RemoteAuthCredentialStore SSE integration", () => {
 		expect(remote!.snapshot.credentials[0].id).not.toBe(bId);
 	});
 
+	test("enforces credential filters on initial snapshots and later SSE entries", async () => {
+		const client = new AuthBrokerClient({ url: handle!.url, token });
+		remote = new RemoteAuthCredentialStore({
+			client,
+			credentialFilter: entry =>
+				entry.credential.type !== "oauth" || entry.credential.email?.toLowerCase() !== "a@example.com",
+		});
+
+		await waitUntil(() => remote!.snapshot.generation > 0);
+		expect(remote.snapshot.credentials).toEqual([]);
+
+		const initialGeneration = remote.snapshot.generation;
+		storage!.upsertCredential("anthropic", mintOAuthCredential("b", Date.now() + 120_000));
+		await waitUntil(
+			() => remote!.snapshot.generation > initialGeneration && remote!.snapshot.credentials.length === 1,
+		);
+		expect(remote.snapshot.credentials[0].credential).toMatchObject({ email: "b@example.com" });
+
+		const allowedGeneration = remote.snapshot.generation;
+		storage!.upsertCredential("anthropic", mintOAuthCredential("a", Date.now() + 180_000));
+		await waitUntil(() => remote!.snapshot.generation > allowedGeneration);
+		expect(remote.snapshot.credentials).toHaveLength(1);
+		expect(remote.snapshot.credentials[0].credential).toMatchObject({ email: "b@example.com" });
+	});
+
+	test("keeps local rows when remote bulk disables fail", async () => {
+		const client = new AuthBrokerClient({ url: handle!.url, token, maxRetries: 0 });
+		const initialResult = await client.fetchSnapshot();
+		if (initialResult.status !== 200) throw new Error("expected initial snapshot");
+		remote = new RemoteAuthCredentialStore({
+			client,
+			initialSnapshot: initialResult.snapshot,
+			streamSnapshots: false,
+		});
+		vi.spyOn(client, "disableCredential").mockRejectedValue(new Error("synthetic broker write failure"));
+
+		await expect(remote.deleteAuthCredentialsRemote("anthropic", "test delete")).rejects.toThrow(
+			"synthetic broker write failure",
+		);
+		expect(remote.listAuthCredentials("anthropic")).toHaveLength(1);
+
+		await expect(
+			remote.replaceAuthCredentialsRemote("anthropic", [{ type: "api_key", key: "replacement-key" }]),
+		).rejects.toThrow("synthetic broker write failure");
+		expect(remote.listAuthCredentials("anthropic")).toHaveLength(1);
+	});
+
 	test("calls onSnapshot for broker snapshots but not the constructor snapshot", async () => {
 		const client = new AuthBrokerClient({ url: handle!.url, token });
 		const initialResult = await client.fetchSnapshot();
@@ -129,5 +176,29 @@ describe("RemoteAuthCredentialStore SSE integration", () => {
 		expect(callbacks).toHaveLength(1);
 		expect(callbacks[0].generation).toBe(refreshed.generation);
 		expect(callbacks[0].snapshot).toEqual(refreshed);
+	});
+	test("reloads AuthStorage when broker SSE changes the remote snapshot", async () => {
+		const client = new AuthBrokerClient({ url: handle!.url, token });
+		const initialResult = await client.fetchSnapshot();
+		if (initialResult.status !== 200) throw new Error("expected initial snapshot");
+		remote = new RemoteAuthCredentialStore({ client, initialSnapshot: initialResult.snapshot });
+		const clientStorage = new AuthStorage(remote);
+		await clientStorage.reload();
+		const initialGeneration = clientStorage.getGeneration();
+
+		try {
+			storage!.upsertCredential("openai", mintOAuthCredential("remote-openai", Date.now() + 120_000));
+			await waitUntil(() => clientStorage.exportSnapshot().credentials.some(entry => entry.provider === "openai"));
+			expect(clientStorage.getGeneration()).toBeGreaterThan(initialGeneration);
+
+			const anthropicId = storage!.exportSnapshot().credentials.find(entry => entry.provider === "anthropic")?.id;
+			expect(anthropicId).toBeDefined();
+			expect(storage!.disableCredentialById(anthropicId!, "removed by test")).toBe(true);
+			await waitUntil(
+				() => !clientStorage.exportSnapshot().credentials.some(entry => entry.provider === "anthropic"),
+			);
+		} finally {
+			clientStorage.close();
+		}
 	});
 });

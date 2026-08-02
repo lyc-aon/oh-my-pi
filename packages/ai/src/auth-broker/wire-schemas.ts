@@ -53,16 +53,23 @@ export const apiKeyCredentialSchema = type({
 	key: type("string").atLeastLength(1),
 });
 
+/** API-key credential returned by a newer broker; client-unknown metadata is ignored. */
+const remoteApiKeyCredentialSchema = type({
+	"+": "delete",
+	type: "'api_key'",
+	key: type("string").atLeastLength(1),
+});
+
 /** Discriminated union accepted on POST /v1/credential (writes). */
 export const writableAuthCredentialSchema = oauthCredentialSchema.or(apiKeyCredentialSchema);
 
 /** Discriminated union returned in snapshots (refresh is sentinel for OAuth). */
-export const snapshotCredentialSchema = remoteOauthCredentialSchema.or(apiKeyCredentialSchema);
+export const snapshotCredentialSchema = remoteOauthCredentialSchema.or(remoteApiKeyCredentialSchema);
 
 // ─── Snapshot ──────────────────────────────────────────────────────────────
 
 export const credentialSnapshotEntrySchema = type({
-	"+": "reject",
+	"+": "delete",
 	id: "number.integer",
 	provider: type("string").atLeastLength(1),
 	credential: snapshotCredentialSchema,
@@ -70,7 +77,7 @@ export const credentialSnapshotEntrySchema = type({
 });
 
 export const snapshotEntrySchema = type({
-	"+": "reject",
+	"+": "delete",
 	id: "number.integer",
 	provider: type("string").atLeastLength(1),
 	credential: snapshotCredentialSchema,
@@ -238,4 +245,43 @@ export const credentialUploadRequestSchema = type({
 export const credentialUploadResponseSchema = type({
 	"+": "reject",
 	entries: credentialSnapshotEntrySchema.array(),
+});
+// ─── Auth Attempt Ledger ───────────────────────────────────────────────────
+
+export const authAttemptReasonCodeSchema = type(
+	"'rate_limit' | 'authentication' | 'transient' | 'classifier_refusal' | 'fireworks_fast' | 'unknown'",
+);
+
+export const authAttemptOutcomeSchema = type("'succeeded' | 'failed' | 'aborted'");
+
+export const authAttemptUsageSchema = type({
+	"+": "reject",
+	input: "number",
+	output: "number",
+	cacheRead: "number",
+	cacheWrite: "number",
+	totalTokens: "number",
+});
+
+export const authAttemptLedgerEntrySchema = type({
+	"+": "reject",
+	recordedAt: "number",
+	"sessionId?": "string",
+	attempt: "number",
+	selector: "string",
+	"nextSelector?": "string",
+	reasonCode: authAttemptReasonCodeSchema,
+	outcome: authAttemptOutcomeSchema,
+	usage: authAttemptUsageSchema,
+	costUsd: "number",
+});
+
+export const authAttemptRecordResponseSchema = type({
+	"+": "reject",
+	ok: "boolean",
+});
+
+export const authAttemptListResponseSchema = type({
+	"+": "reject",
+	attempts: authAttemptLedgerEntrySchema.array(),
 });

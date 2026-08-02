@@ -86,6 +86,8 @@ export interface MockResponse {
 	stopDetails?: StopDetails | null;
 	/** Error text paired with an explicit `"error"` stop reason. */
 	errorMessage?: string;
+	/** HTTP status paired with an explicit `"error"` stop reason. */
+	errorStatus?: number;
 	/** Usage stats. Missing fields default to 0; missing `cost.total` is recomputed from components. */
 	usage?: Partial<Omit<Usage, "cost">> & { cost?: Partial<Usage["cost"]> };
 	/** Pre-set responseId. */
@@ -396,6 +398,7 @@ async function runMock(
 	partial.stopReason = reason;
 	partial.stopDetails = response.stopDetails;
 	partial.errorMessage = response.errorMessage;
+	partial.errorStatus = response.errorStatus;
 	partial.usage = mergeUsage(response.usage);
 	partial.duration = Date.now() - startedAt;
 

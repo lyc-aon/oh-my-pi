@@ -16,9 +16,22 @@ import {
 import { YAML } from "bun";
 import { AuthStorage } from "../auth-storage";
 import { AuthBrokerClient } from "./client";
+import { LycorpAuthClient } from "./lycorpauth-client";
+import { LycorpAuthCredentialStore } from "./lycorpauth-store";
 import { RemoteAuthCredentialStore } from "./remote-store";
 import { readAuthBrokerSnapshotCache, writeAuthBrokerSnapshotCache } from "./snapshot-cache";
 import { DEFAULT_SNAPSHOT_CACHE_TTL_MS, type SnapshotResponse } from "./types";
+
+export interface LycorpAuthConfig {
+	network: "unix" | "tcp";
+	address: string;
+	token: string;
+}
+
+export interface ResolveLycorpAuthConfigOptions {
+	agentDir?: string;
+	configValueResolver?: (config: string) => Promise<string | undefined>;
+}
 
 export interface AuthBrokerClientConfig {
 	url: string;
@@ -68,6 +81,11 @@ async function readTokenFile(): Promise<string | null> {
 interface ConfigSnapshot {
 	url?: string;
 	token?: string;
+	lycorpauthEnabled?: boolean;
+	lycorpauthAddress?: string;
+	lycorpauthNetwork?: "unix" | "tcp";
+	lycorpauthToken?: string;
+	lycorpauthTokenFile?: string;
 }
 
 async function readConfigYaml(agentDir: string): Promise<ConfigSnapshot> {
@@ -77,10 +95,43 @@ async function readConfigYaml(agentDir: string): Promise<ConfigSnapshot> {
 		const parsed = YAML.parse(raw);
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
 		const record = parsed as Record<string, unknown>;
-		const url = typeof record["auth.broker.url"] === "string" ? (record["auth.broker.url"] as string) : undefined;
-		const token =
-			typeof record["auth.broker.token"] === "string" ? (record["auth.broker.token"] as string) : undefined;
-		return { url, token };
+		const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+			value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+		const auth = asRecord(record.auth);
+		const broker = asRecord(auth?.broker);
+		const lycorpauth = asRecord(auth?.lycorpauth);
+		const urlValue = record["auth.broker.url"] ?? broker?.url;
+		const tokenValue = record["auth.broker.token"] ?? broker?.token;
+		const url = typeof urlValue === "string" ? urlValue : undefined;
+		const token = typeof tokenValue === "string" ? tokenValue : undefined;
+		const lycorpauthEnabledValue = record["auth.lycorpauth.enabled"] ?? lycorpauth?.enabled;
+		const lycorpauthEnabled =
+			typeof lycorpauthEnabledValue === "boolean"
+				? lycorpauthEnabledValue
+				: lycorpauthEnabledValue === "true" || lycorpauthEnabledValue === "1";
+		const lycorpauthAddressValue =
+			record["auth.lycorpauth.address"] ??
+			record["auth.lycorpauth.socket"] ??
+			lycorpauth?.address ??
+			lycorpauth?.socket;
+		const lycorpauthAddress = typeof lycorpauthAddressValue === "string" ? lycorpauthAddressValue : undefined;
+		const lycorpauthNetworkValue = record["auth.lycorpauth.network"] ?? lycorpauth?.network;
+		const lycorpauthNetwork =
+			lycorpauthNetworkValue === "unix" || lycorpauthNetworkValue === "tcp" ? lycorpauthNetworkValue : undefined;
+		const lycorpauthTokenValue = record["auth.lycorpauth.token"] ?? lycorpauth?.token;
+		const lycorpauthToken = typeof lycorpauthTokenValue === "string" ? lycorpauthTokenValue : undefined;
+		const lycorpauthTokenFileValue =
+			record["auth.lycorpauth.tokenFile"] ?? lycorpauth?.tokenFile ?? lycorpauth?.token_file;
+		const lycorpauthTokenFile = typeof lycorpauthTokenFileValue === "string" ? lycorpauthTokenFileValue : undefined;
+		return {
+			url,
+			token,
+			lycorpauthEnabled,
+			lycorpauthAddress,
+			lycorpauthNetwork,
+			lycorpauthToken,
+			lycorpauthTokenFile,
+		};
 	} catch (err) {
 		if (isEnoent(err)) return {};
 		logger.warn("auth-broker config.yml unreadable", { error: String(err) });
@@ -97,6 +148,83 @@ function resolveSnapshotTtlMs(): number {
 	if (Number.isFinite(ttlMs) && ttlMs >= 0) return ttlMs;
 	logger.warn("Invalid OMP_AUTH_BROKER_SNAPSHOT_TTL_MS; using default", { value: raw });
 	return DEFAULT_SNAPSHOT_CACHE_TTL_MS;
+}
+
+/**
+ * Resolve LycorpAuth bridge configuration.
+ * Precedence:
+ * 1. LYCORPAUTH_ENABLED / OMP_LYCORPAUTH_ENABLED env vars.
+ * 2. auth.lycorpauth.enabled in config.yml.
+ *
+ * Returns null when LycorpAuth bridge is not enabled. Throws when enabled but token missing.
+ */
+export async function resolveLycorpAuthConfig(
+	options: ResolveLycorpAuthConfigOptions = {},
+): Promise<LycorpAuthConfig | null> {
+	const agentDir = options.agentDir ?? getAgentDir();
+	const resolveConfig = options.configValueResolver ?? defaultResolveConfigValue;
+
+	const envEnabled =
+		process.env.LYCORPAUTH_ENABLED === "true" ||
+		process.env.LYCORPAUTH_ENABLED === "1" ||
+		process.env.OMP_LYCORPAUTH_ENABLED === "true" ||
+		process.env.OMP_LYCORPAUTH_ENABLED === "1";
+
+	const envAddress =
+		process.env.LYCORPAUTH_ADDRESS ||
+		process.env.LYCORPAUTH_SOCKET ||
+		process.env.OMP_LYCORPAUTH_ADDRESS ||
+		process.env.OMP_LYCORPAUTH_SOCKET;
+
+	const envNetwork = (process.env.LYCORPAUTH_NETWORK || process.env.OMP_LYCORPAUTH_NETWORK) as
+		| "unix"
+		| "tcp"
+		| undefined;
+	const envToken = process.env.LYCORPAUTH_TOKEN || process.env.OMP_LYCORPAUTH_TOKEN;
+	const envTokenFile = process.env.LYCORPAUTH_TOKEN_FILE || process.env.OMP_LYCORPAUTH_TOKEN_FILE;
+
+	const fromConfig = await readConfigYaml(agentDir);
+
+	const enabled = envEnabled || fromConfig.lycorpauthEnabled === true;
+	if (!enabled) return null;
+
+	let address = envAddress;
+	if (!address && fromConfig.lycorpauthAddress) {
+		address = await resolveConfig(fromConfig.lycorpauthAddress);
+	}
+	if (!address) {
+		address = "127.0.0.1:8741";
+	}
+
+	let network = envNetwork || fromConfig.lycorpauthNetwork;
+	if (!network) {
+		network = address.includes("/") || address.endsWith(".sock") ? "unix" : "tcp";
+	}
+
+	let token = envToken;
+	if (!token && fromConfig.lycorpauthToken) {
+		token = await resolveConfig(fromConfig.lycorpauthToken);
+	}
+	if (!token) {
+		const tokenFilePath =
+			envTokenFile || fromConfig.lycorpauthTokenFile || path.join(getConfigRootDir(), "lycorpauth", "omp.token");
+		try {
+			const raw = await Bun.file(tokenFilePath).text();
+			const trimmed = raw.trim();
+			if (trimmed.length > 0) token = trimmed;
+		} catch {
+			// ignorable
+		}
+	}
+
+	if (!token) {
+		throw new Error(
+			`LycorpAuth bridge is enabled for ${address} but no bearer token is available. ` +
+				`Set LYCORPAUTH_TOKEN environment variable, auth.lycorpauth.token in config.yml, or place token at ~/.config/lycorpauth/omp.token.`,
+		);
+	}
+
+	return { network, address, token };
 }
 
 /**
@@ -152,6 +280,25 @@ export async function resolveAuthBrokerConfig(
  */
 export async function discoverAuthStorage(options: DiscoverAuthStorageOptions = {}): Promise<AuthStorage> {
 	const agentDir = options.agentDir ?? getAgentDir();
+	const lycorpConfig = await resolveLycorpAuthConfig({
+		agentDir,
+		configValueResolver: options.configValueResolver,
+	});
+
+	if (lycorpConfig) {
+		const client = new LycorpAuthClient(lycorpConfig);
+		const store = new LycorpAuthCredentialStore({
+			client,
+			sourceLabel: options.sourceLabel ?? `LycorpAuth ${lycorpConfig.address}`,
+		});
+		await store.refreshSnapshot();
+		const storage = new AuthStorage(store, {
+			configValueResolver: options.configValueResolver,
+			sourceLabel: options.sourceLabel ?? `LycorpAuth ${lycorpConfig.address}`,
+		});
+		await storage.reload();
+		return storage;
+	}
 	const brokerConfig = await resolveAuthBrokerConfig({
 		agentDir,
 		configValueResolver: options.configValueResolver,

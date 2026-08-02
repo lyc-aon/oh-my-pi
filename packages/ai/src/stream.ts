@@ -10,7 +10,7 @@ import {
 import { CATALOG_PROVIDERS, type ProviderCatalogEntry } from "@oh-my-pi/pi-catalog/provider-models";
 import { $env, $pickenv, extractHttpStatusFromError } from "@oh-my-pi/pi-utils";
 import { getCustomApi } from "./api-registry";
-import { AUTH_RETRY_STEPS, isApiKeyResolver, resolveRetryKey } from "./auth-retry";
+import { AUTH_RETRY_STEPS, isApiKeyResolver, isAuthRetryableError, resolveRetryKey } from "./auth-retry";
 import { ProviderHttpError } from "./errors";
 import type { BedrockOptions } from "./providers/amazon-bedrock";
 import type { AnthropicOptions } from "./providers/anthropic";
@@ -48,7 +48,6 @@ import {
 	streamOpenAIResponses,
 } from "./providers/register-builtins";
 import { isSyntheticModel, streamSynthetic } from "./providers/synthetic";
-import { isUsageLimitOutcome } from "./rate-limit-utils";
 import { PROVIDER_REGISTRY } from "./registry";
 import type {
 	Api,
@@ -382,20 +381,10 @@ function extractStatusFromAssistantError(message: AssistantMessage): number | un
 }
 
 function isRetryableUpstreamError(error: unknown, status: number | undefined, message: string | undefined): boolean {
-	// 401 means the credential is bad. Usage-limit phrasing (Codex's
-	// "You have hit your ChatGPT usage limit", Anthropic's "usage_limit_reached",
-	// Google's "resource_exhausted", OpenAI's "insufficient_quota") and 429s
-	// without transient rate-limit wording mean this account is parked but a
-	// sibling credential can usually pick the request up. Both are rotatable
-	// via `onAuthError` — the auth-gateway maps the former to
-	// `invalidateCredentialMatching` and the latter to
-	// `markUsageLimitReached`. Transient 429s ("Too many requests",
-	// per-minute caps) classify as RATE_LIMIT_EXCEEDED in
-	// `parseRateLimitReason` and stay in the provider's own backoff layer
-	// instead of burning siblings.
-	if (status === 401) return true;
-	void error;
-	return isUsageLimitOutcome(status, message);
+	if (status === undefined && message === undefined) return isAuthRetryableError(error);
+	const text = message ?? (error instanceof Error ? error.message : typeof error === "string" ? error : "");
+	const candidate = status === undefined ? new Error(text) : Object.assign(new Error(text), { status });
+	return isAuthRetryableError(candidate);
 }
 
 function createAssistantAuthError(message: AssistantMessage): Error {

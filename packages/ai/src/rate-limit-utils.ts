@@ -1,3 +1,57 @@
+import { extractHttpStatusFromError } from "@oh-my-pi/pi-utils";
+import type { AuthAttemptReasonCode } from "./auth-storage";
+
+const AUTH_ERROR_PATTERN =
+	/\b(?:authentication_error|oauth_not_allowed_for_organization|permission_error|permission_denied|access_denied|forbidden|unauthorized|unauthenticated|invalid[_ ](?:api[_ ]?key|token|grant)|expired[_ ](?:token|key)|revoked[_ ](?:token|key)|invalid_grant|invalid_token)\b/i;
+
+export function classifyAuthAttemptReason(
+	error: unknown,
+	options?: { isClassifierRefusal?: boolean; isFireworksFast?: boolean },
+): AuthAttemptReasonCode {
+	if (options?.isClassifierRefusal) return "classifier_refusal";
+	if (options?.isFireworksFast) return "fireworks_fast";
+	if (!error) return "unknown";
+
+	const message =
+		typeof error === "string"
+			? error
+			: error instanceof Error
+				? error.message
+				: typeof error === "object" &&
+						error !== null &&
+						"errorMessage" in error &&
+						typeof error.errorMessage === "string"
+					? error.errorMessage
+					: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
+						? error.message
+						: String(error);
+
+	const status = extractHttpStatusFromError(error) ?? extractHttpStatusFromError({ message });
+	const lower = message.toLowerCase();
+
+	if (status === 401 || (status === 403 && AUTH_ERROR_PATTERN.test(message)) || AUTH_ERROR_PATTERN.test(message)) {
+		return "authentication";
+	}
+
+	if (status === 429 || isUsageLimitError(message) || isUsageLimitOutcome(status, message)) {
+		return "rate_limit";
+	}
+
+	if (
+		(status !== undefined && status >= 500) ||
+		/\b(500|502|503|504|529|overloaded|service unavailable|connection|fetch failed|timeout|econnrefused|stream reset|rst_stream|socket hang up)\b/i.test(
+			lower,
+		) ||
+		parseRateLimitReason(message) === "MODEL_CAPACITY_EXHAUSTED" ||
+		parseRateLimitReason(message) === "RATE_LIMIT_EXCEEDED" ||
+		parseRateLimitReason(message) === "SERVER_ERROR"
+	) {
+		return "transient";
+	}
+
+	return "unknown";
+}
+
 /**
  * Rate limit reason classification and backoff calculation utilities.
  * Ported from opencode-antigravity-auth plugin for consistency.

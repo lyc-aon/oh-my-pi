@@ -24,7 +24,12 @@ import {
 	completeSimple,
 	type Model,
 } from "@oh-my-pi/pi-ai";
-import { AuthBrokerClient, RemoteAuthCredentialStore, type SnapshotResponse } from "@oh-my-pi/pi-ai/auth-broker";
+import {
+	AuthBrokerClient,
+	RemoteAuthCredentialStore,
+	type SnapshotEntry,
+	type SnapshotResponse,
+} from "@oh-my-pi/pi-ai/auth-broker";
 import { DEFAULT_AUTH_GATEWAY_BIND, startAuthGateway } from "@oh-my-pi/pi-ai/auth-gateway";
 import { type GeneratedProvider, getBundledModels, getBundledProviders } from "@oh-my-pi/pi-catalog/models";
 import { getConfigRootDir, isEnoent, VERSION } from "@oh-my-pi/pi-utils";
@@ -129,10 +134,69 @@ function createBrokerClient(brokerConfig: AuthBrokerClientConfig): AuthBrokerCli
 	return new AuthBrokerClient({ url: brokerConfig.url, token: brokerConfig.token });
 }
 
+function createGatewayCredentialFilter(): ((entry: Readonly<SnapshotEntry>) => boolean) | undefined {
+	const deniedIdentities = new Set(
+		(process.env.OMP_AUTH_GATEWAY_DENY_IDENTITIES ?? "")
+			.split(",")
+			.map(identity => identity.trim().toLowerCase())
+			.filter(Boolean),
+	);
+	if (deniedIdentities.size === 0) return undefined;
+	return entry => {
+		if (entry.credential.type !== "oauth") return true;
+		const identities = [entry.credential.email, entry.credential.accountId, entry.credential.projectId];
+		return identities.every(identity => !identity || !deniedIdentities.has(identity.toLowerCase()));
+	};
+}
+
 async function fetchBrokerSnapshot(client: AuthBrokerClient): Promise<SnapshotResponse> {
 	const result = await client.fetchSnapshot();
 	if (result.status !== 200) throw new Error("Auth broker returned no initial snapshot");
 	return result.snapshot;
+}
+
+export interface LiveAuthGatewayCatalog {
+	resolveModel(id: string): Model<Api> | undefined;
+	listModels(): Iterable<Model<Api>>;
+	close(): void;
+}
+
+/**
+ * Credential-scoped model catalog that follows AuthStorage generations.
+ * Remote broker SSE updates reload AuthStorage, which bumps its generation;
+ * rebuilding here makes newly-added and removed providers effective without a
+ * gateway restart.
+ */
+export function createLiveAuthGatewayCatalog(storage: AuthStorage): LiveAuthGatewayCatalog {
+	let modelById = new Map<string, Model<Api>>();
+	let models: Model<Api>[] = [];
+
+	const rebuild = (): void => {
+		const providersWithCredentials = new Set<string>();
+		for (const entry of storage.exportSnapshot().credentials) {
+			providersWithCredentials.add(entry.provider);
+		}
+		const nextById = new Map<string, Model<Api>>();
+		const nextModels: Model<Api>[] = [];
+		for (const provider of getBundledProviders()) {
+			if (!providersWithCredentials.has(provider)) continue;
+			for (const model of getBundledModels(provider as GeneratedProvider)) {
+				nextModels.push(model);
+				nextById.set(`${model.provider}/${model.id}`, model);
+				if (!nextById.has(model.id)) nextById.set(model.id, model);
+			}
+		}
+		modelById = nextById;
+		models = nextModels;
+	};
+
+	rebuild();
+	const unsubscribe = storage.onGenerationChanged(rebuild);
+	return {
+		resolveModel: id => modelById.get(id),
+		listModels: () => models,
+		close: unsubscribe,
+	};
 }
 
 async function runServe(flags: AuthGatewayCommandArgs["flags"]): Promise<void> {
@@ -149,7 +213,11 @@ async function runServe(flags: AuthGatewayCommandArgs["flags"]): Promise<void> {
 	// in sdk.ts. The gateway never touches local SQLite.
 	const client = createBrokerClient(brokerConfig);
 	const initialSnapshot = await fetchBrokerSnapshot(client);
-	const store = new RemoteAuthCredentialStore({ client, initialSnapshot });
+	const store = new RemoteAuthCredentialStore({
+		client,
+		initialSnapshot,
+		credentialFilter: createGatewayCredentialFilter(),
+	});
 	// Refresh + usage both flow through the store's broker hooks automatically —
 	// `RemoteAuthCredentialStore.refreshOAuthCredential` and `.fetchUsageReports`.
 	// AuthStorage discovers them when no explicit option overrides them, so the
@@ -159,31 +227,18 @@ async function runServe(flags: AuthGatewayCommandArgs["flags"]): Promise<void> {
 	});
 	await storage.reload();
 
-	// Build the model resolver + catalog from pi-ai's bundled metadata, scoped
-	// to providers we hold credentials for. Format handlers ask `resolveModel`
-	// to translate a client-requested `model` field into a pi-ai `Model<Api>`
-	// before dispatch; `listModels` powers `/v1/models`.
-	const snapshot = storage.exportSnapshot();
-	const providersWithCreds = new Set<string>();
-	for (const entry of snapshot.credentials) providersWithCreds.add(entry.provider);
-	const modelById = new Map<string, Model<Api>>();
-	for (const provider of getBundledProviders()) {
-		if (!providersWithCreds.has(provider)) continue;
-		for (const model of getBundledModels(provider as GeneratedProvider)) {
-			// Always set the qualified key (no collision possible)
-			modelById.set(`${model.provider}/${model.id}`, model);
-			// Bare id as fallback for legacy clients (first-write-wins)
-			if (!modelById.has(model.id)) modelById.set(model.id, model);
-		}
-	}
+	// Keep the resolver and Codex model catalog synchronized with broker snapshot
+	// generations. Qualified selectors are canonical; bare ids remain accepted
+	// for legacy clients without duplicating rows in `/v1/models`.
+	const catalog = createLiveAuthGatewayCatalog(storage);
 
 	const handle = startAuthGateway({
 		storage,
 		bind,
 		bearerTokens: gatewayToken ? [gatewayToken] : [],
 		version: VERSION,
-		resolveModel: (id: string) => modelById.get(id),
-		listModels: () => modelById.values(),
+		resolveModel: catalog.resolveModel,
+		listModels: catalog.listModels,
 	});
 	process.stdout.write(`auth-gateway listening on ${handle.url}\n`);
 	if (gatewayToken) {
@@ -201,6 +256,7 @@ async function runServe(flags: AuthGatewayCommandArgs["flags"]): Promise<void> {
 		process.stdout.write(`\nReceived ${signal}, shutting down...\n`);
 		let closeError: unknown;
 		try {
+			catalog.close();
 			await handle.close();
 		} catch (error) {
 			closeError = error;
@@ -540,7 +596,11 @@ async function runCheck(flags: AuthGatewayCommandArgs["flags"]): Promise<void> {
 
 	const client = createBrokerClient(brokerConfig);
 	const initialSnapshot = await fetchBrokerSnapshot(client);
-	const store = new RemoteAuthCredentialStore({ client, initialSnapshot });
+	const store = new RemoteAuthCredentialStore({
+		client,
+		initialSnapshot,
+		credentialFilter: createGatewayCredentialFilter(),
+	});
 	const storage = new AuthStorage(store, { sourceLabel: `broker ${brokerConfig.url}` });
 	try {
 		await storage.reload();

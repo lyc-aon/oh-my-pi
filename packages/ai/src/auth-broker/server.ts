@@ -11,10 +11,18 @@
  */
 import { logger } from "@oh-my-pi/pi-utils";
 import { type Type, type } from "arktype";
-import type { AuthStorage } from "../auth-storage";
+import type {
+	AuthAttemptLedgerEntry,
+	AuthAttemptOutcome,
+	AuthAttemptQuery,
+	AuthAttemptReasonCode,
+	AuthStorage,
+} from "../auth-storage";
 import { parseBind } from "../utils/parse-bind";
 import { AuthBrokerRefresher, type AuthBrokerRefresherSchedule } from "./refresher";
 import type {
+	AuthAttemptListResponse,
+	AuthAttemptRecordResponse,
 	CredentialDisableResponse,
 	CredentialRefreshResponse,
 	CredentialUploadResponse,
@@ -33,7 +41,11 @@ import {
 	DEFAULT_SERVER_IDLE_TIMEOUT_S,
 	DEFAULT_STREAM_KEEPALIVE_MS,
 } from "./types";
-import { credentialDisableRequestSchema, credentialUploadRequestSchema } from "./wire-schemas";
+import {
+	authAttemptLedgerEntrySchema,
+	credentialDisableRequestSchema,
+	credentialUploadRequestSchema,
+} from "./wire-schemas";
 
 export interface AuthBrokerServerOptions {
 	/** Underlying credential storage (wraps the local SQLite store on the broker). */
@@ -75,6 +87,22 @@ function json(status: number, body: unknown, headers?: Record<string, string>): 
 
 function empty(status: number, headers?: Record<string, string>): Response {
 	return new Response(null, { status, headers });
+}
+type CredentialMutationOperation = "refresh" | "disable" | "upload";
+
+function credentialMutationFailure(
+	status: number,
+	operation: CredentialMutationOperation,
+	code: string,
+	message: string,
+): Response {
+	return json(status, {
+		error: message,
+		code,
+		operation,
+		durable: false,
+		retrySafe: false,
+	});
 }
 
 function isAuthorized(req: Request, tokens: ReadonlySet<string>): boolean {
@@ -573,8 +601,13 @@ export function startAuthBroker(opts: AuthBrokerServerOptions): AuthBrokerServer
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						logger.warn("auth-broker refresh failed", { id, peer, error: message });
-						const status = message.includes("No credential with id") ? 404 : 500;
-						return json(status, { error: message });
+						const notFound = message.includes("No credential with id");
+						return credentialMutationFailure(
+							notFound ? 404 : 500,
+							"refresh",
+							notFound ? "credential_not_found" : "credential_refresh_failed",
+							notFound ? `No credential with id=${id}` : "Credential refresh was not durably persisted.",
+						);
 					}
 				}
 				const disableMatch = req.method === "POST" ? pathname.match(DISABLE_ROUTE) : null;
@@ -584,14 +617,30 @@ export function startAuthBroker(opts: AuthBrokerServerOptions): AuthBrokerServer
 					if (!parsed.ok) return parsed.response;
 					const cause =
 						parsed.data.cause && parsed.data.cause.length > 0 ? parsed.data.cause : "disabled via auth-broker";
-					const ok = opts.storage.disableCredentialById(id, cause);
-					if (!ok) {
-						logger.info("auth-broker disable miss", { id, peer, cause });
-						return json(404, { error: `No credential with id=${id}` });
+					try {
+						const ok = opts.storage.disableCredentialById(id, cause);
+						if (!ok) {
+							logger.info("auth-broker disable miss", { id, peer, cause });
+							return credentialMutationFailure(
+								404,
+								"disable",
+								"credential_not_found",
+								`No credential with id=${id}`,
+							);
+						}
+						logger.info("auth-broker credential disabled", { id, peer, cause });
+						const response: CredentialDisableResponse = { ok: true };
+						return json(200, response);
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						logger.warn("auth-broker disable failed", { id, peer, error: message });
+						return credentialMutationFailure(
+							500,
+							"disable",
+							"credential_disable_failed",
+							"Credential disable was not durably persisted.",
+						);
 					}
-					logger.info("auth-broker credential disabled", { id, peer, cause });
-					const response: CredentialDisableResponse = { ok: true };
-					return json(200, response);
 				}
 				if (req.method === "POST" && pathname === "/v1/credential") {
 					const parsed = await parseBody(req, credentialUploadRequestSchema);
@@ -615,6 +664,55 @@ export function startAuthBroker(opts: AuthBrokerServerOptions): AuthBrokerServer
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						logger.warn("auth-broker upload failed", { provider, peer, error: message });
+						return credentialMutationFailure(
+							500,
+							"upload",
+							"credential_upload_failed",
+							"Credential upload was not durably persisted.",
+						);
+					}
+				}
+				if (req.method === "POST" && pathname === "/v1/attempts") {
+					const parsed = await parseBody(req, authAttemptLedgerEntrySchema);
+					if (!parsed.ok) return parsed.response;
+					try {
+						await opts.storage.recordAuthAttempt(parsed.data as AuthAttemptLedgerEntry);
+						logger.info("auth-broker attempt recorded", {
+							selector: parsed.data.selector,
+							reasonCode: parsed.data.reasonCode,
+							outcome: parsed.data.outcome,
+							peer,
+						});
+						const response: AuthAttemptRecordResponse = { ok: true };
+						return json(200, response);
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						logger.warn("auth-broker attempt record failed", { peer, error: message });
+						return credentialMutationFailure(
+							500,
+							"upload",
+							"auth_attempt_persist_failed",
+							"Auth attempt was not durably persisted.",
+						);
+					}
+				}
+				if (req.method === "GET" && pathname === "/v1/attempts") {
+					try {
+						const query: AuthAttemptQuery = {
+							sessionId: url.searchParams.get("sessionId") ?? undefined,
+							selector: url.searchParams.get("selector") ?? undefined,
+							reasonCode: (url.searchParams.get("reasonCode") as AuthAttemptReasonCode) ?? undefined,
+							outcome: (url.searchParams.get("outcome") as AuthAttemptOutcome) ?? undefined,
+							sinceMs: url.searchParams.has("sinceMs") ? Number(url.searchParams.get("sinceMs")) : undefined,
+							limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+						};
+						const attempts = await opts.storage.listAuthAttempts(query);
+						logger.info("auth-broker attempts served", { peer, count: attempts.length });
+						const response: AuthAttemptListResponse = { attempts };
+						return json(200, response);
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						logger.warn("auth-broker attempts list failed", { peer, error: message });
 						return json(500, { error: message });
 					}
 				}

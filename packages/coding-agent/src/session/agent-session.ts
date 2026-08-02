@@ -95,9 +95,11 @@ import type {
 } from "@oh-my-pi/pi-ai";
 import {
 	calculateRateLimitBackoffMs,
+	classifyAuthAttemptReason,
 	clearAnthropicFastModeFallback,
 	deriveClaudeDeviceId,
 	Effort,
+	isAuthRetryableError,
 	isContextOverflow,
 	isUsageLimitError,
 	parseRateLimitReason,
@@ -2678,6 +2680,24 @@ export class AgentSession {
 					!this.#isEmptyAssistantStop(assistantMsg) &&
 					this.#retryAttempt > 0
 				) {
+					if (this.model) {
+						await this.#modelRegistry.authStorage?.recordAuthAttempt({
+							recordedAt: Date.now(),
+							sessionId: this.sessionId,
+							attempt: this.#retryAttempt,
+							selector: formatRetryFallbackSelector(this.model, this.thinkingLevel),
+							reasonCode: "unknown",
+							outcome: "succeeded",
+							usage: {
+								input: assistantMsg.usage.input ?? 0,
+								output: assistantMsg.usage.output ?? 0,
+								cacheRead: assistantMsg.usage.cacheRead ?? 0,
+								cacheWrite: assistantMsg.usage.cacheWrite ?? 0,
+								totalTokens: assistantMsg.usage.totalTokens ?? 0,
+							},
+							costUsd: assistantMsg.usage.cost.total ?? 0,
+						});
+					}
 					if (this.#activeRetryFallback && this.model) {
 						await this.#emitSessionEvent({
 							type: "retry_fallback_succeeded",
@@ -10278,7 +10298,9 @@ export class AgentSession {
 		if (this.#isStaleOpenAIResponsesReplayError(message)) return true;
 
 		const err = message.errorMessage;
-		return this.#isTransientErrorMessage(err) || isUsageLimitError(err);
+		const authError =
+			message.errorStatus === undefined ? err : Object.assign(new Error(err), { status: message.errorStatus });
+		return this.#isTransientErrorMessage(err) || isAuthRetryableError(authError) || isUsageLimitError(err);
 	}
 	/**
 	 * Retried turns remove the failed assistant message from active context.
@@ -10746,6 +10768,24 @@ export class AgentSession {
 		}
 
 		if (this.#retryAttempt > retrySettings.maxRetries) {
+			const selector = this.model ? formatRetryFallbackSelector(this.model, this.thinkingLevel) : "unknown";
+			await this.#modelRegistry.authStorage?.recordAuthAttempt({
+				recordedAt: Date.now(),
+				sessionId: this.sessionId,
+				attempt: this.#retryAttempt - 1,
+				selector,
+				nextSelector: undefined,
+				reasonCode: classifyAuthAttemptReason(message),
+				outcome: "failed",
+				usage: {
+					input: message.usage?.input ?? 0,
+					output: message.usage?.output ?? 0,
+					cacheRead: message.usage?.cacheRead ?? 0,
+					cacheWrite: message.usage?.cacheWrite ?? 0,
+					totalTokens: message.usage?.totalTokens ?? 0,
+				},
+				costUsd: message.usage?.cost?.total ?? 0,
+			});
 			// Max retries exceeded, emit final failure and reset
 			await this.#emitSessionEvent({
 				type: "auto_retry_end",
@@ -10840,6 +10880,25 @@ export class AgentSession {
 			}
 		}
 		if (classifierRefusal && !switchedModel) {
+			const selector =
+				currentSelector ?? (this.model ? formatRetryFallbackSelector(this.model, this.thinkingLevel) : "unknown");
+			await this.#modelRegistry.authStorage?.recordAuthAttempt({
+				recordedAt: Date.now(),
+				sessionId: this.sessionId,
+				attempt: this.#retryAttempt,
+				selector,
+				nextSelector: undefined,
+				reasonCode: "classifier_refusal",
+				outcome: "failed",
+				usage: {
+					input: message.usage?.input ?? 0,
+					output: message.usage?.output ?? 0,
+					cacheRead: message.usage?.cacheRead ?? 0,
+					cacheWrite: message.usage?.cacheWrite ?? 0,
+					totalTokens: message.usage?.totalTokens ?? 0,
+				},
+				costUsd: message.usage?.cost?.total ?? 0,
+			});
 			this.#retryAttempt = 0;
 			this.#resolveRetry();
 			return false;
@@ -10849,10 +10908,57 @@ export class AgentSession {
 		// retrying the failing fast model for a hard router error that the generic
 		// classifier wouldn't retry — surface it instead.
 		if (options?.fireworksFastFallback && !switchedModel && !this.#isRetryableError(message)) {
+			const selector =
+				currentSelector ?? (this.model ? formatRetryFallbackSelector(this.model, this.thinkingLevel) : "unknown");
+			await this.#modelRegistry.authStorage?.recordAuthAttempt({
+				recordedAt: Date.now(),
+				sessionId: this.sessionId,
+				attempt: this.#retryAttempt,
+				selector,
+				nextSelector: undefined,
+				reasonCode: "fireworks_fast",
+				outcome: "failed",
+				usage: {
+					input: message.usage?.input ?? 0,
+					output: message.usage?.output ?? 0,
+					cacheRead: message.usage?.cacheRead ?? 0,
+					cacheWrite: message.usage?.cacheWrite ?? 0,
+					totalTokens: message.usage?.totalTokens ?? 0,
+				},
+				costUsd: message.usage?.cost?.total ?? 0,
+			});
 			this.#retryAttempt = 0;
 			this.#resolveRetry();
 			return false;
 		}
+
+		const isFireworksFast = options?.fireworksFastFallback === true && switchedModel;
+		const reasonCode = classifyAuthAttemptReason(message, {
+			isClassifierRefusal: classifierRefusal,
+			isFireworksFast,
+		});
+		const selector =
+			currentSelector ?? (this.model ? formatRetryFallbackSelector(this.model, this.thinkingLevel) : "unknown");
+		const nextSelector =
+			switchedModel && this.model ? formatRetryFallbackSelector(this.model, this.thinkingLevel) : selector;
+
+		await this.#modelRegistry.authStorage?.recordAuthAttempt({
+			recordedAt: Date.now(),
+			sessionId: this.sessionId,
+			attempt: this.#retryAttempt,
+			selector,
+			nextSelector,
+			reasonCode,
+			outcome: "failed",
+			usage: {
+				input: message.usage?.input ?? 0,
+				output: message.usage?.output ?? 0,
+				cacheRead: message.usage?.cacheRead ?? 0,
+				cacheWrite: message.usage?.cacheWrite ?? 0,
+				totalTokens: message.usage?.totalTokens ?? 0,
+			},
+			costUsd: message.usage?.cost?.total ?? 0,
+		});
 
 		// Fail-fast cap: if the provider asks us to wait longer than
 		// retry.maxDelayMs and we have no fallback credential or model to
@@ -10903,6 +11009,17 @@ export class AgentSession {
 			const attempt = this.#retryAttempt;
 			this.#retryAttempt = 0;
 			this.#retryAbortController = undefined;
+			await this.#modelRegistry.authStorage?.recordAuthAttempt({
+				recordedAt: Date.now(),
+				sessionId: this.sessionId,
+				attempt,
+				selector,
+				nextSelector: undefined,
+				reasonCode: "transient",
+				outcome: "aborted",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+				costUsd: 0,
+			});
 			await this.#emitSessionEvent({
 				type: "auto_retry_end",
 				success: false,

@@ -33,7 +33,7 @@ describe("isApiKeyResolver / resolveApiKeyOnce", () => {
 });
 
 describe("isAuthRetryableError", () => {
-	it("treats 401 and usage-limit phrasing as retryable, everything else as not", () => {
+	it("retries credential-scoped auth and usage-limit failures without rotating generic 403s", () => {
 		expect(isAuthRetryableError(authError(401))).toBe(true);
 		expect(isAuthRetryableError(usageLimitError())).toBe(true);
 		// A 429 whose body names the *account's* rate limit is rotatable (switch
@@ -52,7 +52,18 @@ describe("isAuthRetryableError", () => {
 		// credentials won't help an org/global limit.
 		expect(isAuthRetryableError(Object.assign(new Error("429 too many requests"), { status: 429 }))).toBe(false);
 		expect(isAuthRetryableError("Error: 401 unauthorized")).toBe(true);
-		expect(isAuthRetryableError(authError(403))).toBe(false);
+		expect(isAuthRetryableError(authError(403))).toBe(true);
+		expect(
+			isAuthRetryableError(
+				Object.assign(
+					new Error(
+						'403 {"type":"error","error":{"type":"permission_error","details":{"error_code":"oauth_not_allowed_for_organization"}}}',
+					),
+					{ status: 403 },
+				),
+			),
+		).toBe(true);
+		expect(isAuthRetryableError(Object.assign(new Error("403 forbidden"), { status: 403 }))).toBe(false);
 		expect(isAuthRetryableError(authError(500))).toBe(false);
 		expect(isAuthRetryableError(new Error("network blip"))).toBe(false);
 		expect(isAuthRetryableError(undefined)).toBe(false);

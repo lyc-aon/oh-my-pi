@@ -73,7 +73,7 @@ export const CATALOG_PROVIDERS = [
 	},
 	{
 		id: "anthropic",
-		defaultModel: "claude-opus-4-8",
+		defaultModel: "claude-opus-5",
 		createModelManagerOptions: (config: ModelManagerConfig) => anthropicModelManagerOptions(config),
 	},
 	{
