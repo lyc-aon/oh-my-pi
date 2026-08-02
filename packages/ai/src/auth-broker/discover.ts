@@ -274,31 +274,38 @@ export async function resolveAuthBrokerConfig(
 }
 
 /**
+ * Build direct LycorpAuth storage when that authority is explicitly enabled.
+ * Returns `null` instead of falling through to an auth-broker client or SQLite.
+ * Broker servers use this bounded helper to avoid proxying back into themselves.
+ */
+export async function discoverLycorpAuthStorage(options: DiscoverAuthStorageOptions = {}): Promise<AuthStorage | null> {
+	const agentDir = options.agentDir ?? getAgentDir();
+	const lycorpConfig = await resolveLycorpAuthConfig({
+		agentDir,
+		configValueResolver: options.configValueResolver,
+	});
+	if (!lycorpConfig) return null;
+	const sourceLabel = options.sourceLabel ?? `LycorpAuth ${lycorpConfig.address}`;
+	const client = new LycorpAuthClient(lycorpConfig);
+	const store = new LycorpAuthCredentialStore({ client, sourceLabel });
+	await store.refreshSnapshot();
+	const storage = new AuthStorage(store, {
+		configValueResolver: options.configValueResolver,
+		sourceLabel,
+	});
+	await storage.reload();
+	return storage;
+}
+
+/**
  * Create an AuthStorage instance, using the broker when configured and falling
  * back to the local SQLite store otherwise. This is the single source of truth
  * for the TUI and the catalog generator.
  */
 export async function discoverAuthStorage(options: DiscoverAuthStorageOptions = {}): Promise<AuthStorage> {
 	const agentDir = options.agentDir ?? getAgentDir();
-	const lycorpConfig = await resolveLycorpAuthConfig({
-		agentDir,
-		configValueResolver: options.configValueResolver,
-	});
-
-	if (lycorpConfig) {
-		const client = new LycorpAuthClient(lycorpConfig);
-		const store = new LycorpAuthCredentialStore({
-			client,
-			sourceLabel: options.sourceLabel ?? `LycorpAuth ${lycorpConfig.address}`,
-		});
-		await store.refreshSnapshot();
-		const storage = new AuthStorage(store, {
-			configValueResolver: options.configValueResolver,
-			sourceLabel: options.sourceLabel ?? `LycorpAuth ${lycorpConfig.address}`,
-		});
-		await storage.reload();
-		return storage;
-	}
+	const lycorpStorage = await discoverLycorpAuthStorage({ ...options, agentDir });
+	if (lycorpStorage) return lycorpStorage;
 	const brokerConfig = await resolveAuthBrokerConfig({
 		agentDir,
 		configValueResolver: options.configValueResolver,

@@ -31,7 +31,12 @@ import {
 	PROVIDER_REGISTRY,
 	SqliteAuthCredentialStore,
 } from "@oh-my-pi/pi-ai";
-import { AuthBrokerClient, DEFAULT_AUTH_BROKER_BIND, startAuthBroker } from "@oh-my-pi/pi-ai/auth-broker";
+import {
+	AuthBrokerClient,
+	DEFAULT_AUTH_BROKER_BIND,
+	discoverLycorpAuthStorage,
+	startAuthBroker,
+} from "@oh-my-pi/pi-ai/auth-broker";
 import { $which, APP_NAME, getAgentDbPath, getConfigRootDir, isEnoent, logger, VERSION } from "@oh-my-pi/pi-utils";
 import { setTransports as setLoggerTransports } from "@oh-my-pi/pi-utils/logger";
 import { $ } from "bun";
@@ -126,10 +131,13 @@ async function runServe(flags: AuthBrokerCommandArgs["flags"]): Promise<void> {
 
 	const bind = flags.bind ?? DEFAULT_AUTH_BROKER_BIND;
 	const token = await ensureToken();
-	const dbPath = getAgentDbPath();
-	const store = await SqliteAuthCredentialStore.open(dbPath);
-	const storage = new AuthStorage(store);
-	await storage.reload();
+	let storage = await discoverLycorpAuthStorage({ sourceLabel: "LycorpAuth broker authority" });
+	if (!storage) {
+		const dbPath = getAgentDbPath();
+		const store = await SqliteAuthCredentialStore.open(dbPath);
+		storage = new AuthStorage(store);
+		await storage.reload();
+	}
 	const handle = startAuthBroker({
 		storage,
 		bind,

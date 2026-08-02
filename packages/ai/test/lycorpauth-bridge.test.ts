@@ -3,7 +3,11 @@ import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resolveAuthBrokerConfig, resolveLycorpAuthConfig } from "../src/auth-broker/discover";
+import {
+	discoverLycorpAuthStorage,
+	resolveAuthBrokerConfig,
+	resolveLycorpAuthConfig,
+} from "../src/auth-broker/discover";
 import { LycorpAuthClient } from "../src/auth-broker/lycorpauth-client";
 import { LycorpAuthCredentialStore } from "../src/auth-broker/lycorpauth-store";
 import { AuthStorage, REMOTE_REFRESH_SENTINEL } from "../src/auth-storage";
@@ -290,6 +294,34 @@ describe("LycorpAuth-to-OMP Credential Bridge", () => {
 		expect(credentials[0].provider).toBe("openai");
 		expect(credentials[0].credential.type).toBe("api_key");
 		expect((credentials[0].credential as { key: string }).key).toBe("sk-proj-synthetic-openai-test-key-123");
+	});
+
+	test("builds direct authority storage without broker or SQLite fallback", async () => {
+		const records: MockRecord[] = [
+			{
+				id: "rec_direct_discovery",
+				title: "Direct discovery",
+				provider: "openai",
+				credential_type: "api_key",
+				tags: ["omp"],
+				fields: [{ key: "api_key", sensitive: true }],
+				secretValues: { api_key: "synthetic-direct-discovery-key" },
+			},
+		];
+		mockHandle = await createMockLycorpAuthServer(records);
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "lycorpauth-direct-discovery-"));
+		process.env.LYCORPAUTH_ENABLED = "1";
+		process.env.LYCORPAUTH_NETWORK = "tcp";
+		process.env.LYCORPAUTH_ADDRESS = mockHandle.address;
+		process.env.LYCORPAUTH_TOKEN = MOCK_TOKEN;
+		try {
+			const storage = await discoverLycorpAuthStorage({ agentDir });
+			expect(storage?.listStoredCredentials("openai")).toHaveLength(1);
+			expect(storage?.describeCredentialSource("openai")).toContain("LycorpAuth");
+			storage?.close();
+		} finally {
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
 	});
 
 	test("resolves OAuth credential with redacted diagnostics metadata", async () => {
